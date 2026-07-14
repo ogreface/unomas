@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+
+# agent / tooling scratch
+.playwright-mcp/
+
+.DS_Store
+*.log
