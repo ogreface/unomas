@@ -46,6 +46,7 @@ identical semantics to the authoritative game.
 ## Docs
 
 - **[docs/plan.md](docs/plan.md)** — the implementation plan and staging
+- [docs/decisions.md](docs/decisions.md) — the ruling on each rules ambiguity (source of truth)
 - [docs/research/rules-spec.md](docs/research/rules-spec.md) — the authoritative rules, sourced from
   Mattel's instruction sheet, plus every ambiguity it leaves open
 - [docs/research/stack-decisions.md](docs/research/stack-decisions.md) — stack choices, with the
@@ -53,4 +54,8 @@ identical semantics to the authoritative game.
 
 ## Status
 
-Early. The rules research and the card deck are done; the engine is next.
+Stage 0 (the rules engine) is complete and green: the pure reducer, all action cards including the
+full-pile Flip inversion, challenges, UNO call/callout, scoring, and view redaction with both
+information channels — official Uno Flip shipping as the first rule pack. 123 tests pass;
+`tsc`, `vitest`, and `eslint` are all clean. Next up is Stage 1 (the network + UI MVP:
+`packages/protocol`, the `GameRoom` Durable Object, and the client).
