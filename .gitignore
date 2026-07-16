@@ -3,6 +3,10 @@ dist/
 .wrangler/
 .dev.vars
 
+# test / build output
+test-results/
+playwright-report/
+
 # agent / tooling scratch
 .playwright-mcp/
 

@@ -1,5 +1,8 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+# Approve the native postinstall scripts these tools ship (pnpm blocks build scripts by default).
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
+  workerd: true
+  sharp: true
