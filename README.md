@@ -46,6 +46,7 @@ identical semantics to the authoritative game.
 ## Docs
 
 - **[docs/plan.md](docs/plan.md)** — the implementation plan and staging
+- [docs/decisions.md](docs/decisions.md) — the ruling on each rules ambiguity (source of truth)
 - [docs/research/rules-spec.md](docs/research/rules-spec.md) — the authoritative rules, sourced from
   Mattel's instruction sheet, plus every ambiguity it leaves open
 - [docs/research/stack-decisions.md](docs/research/stack-decisions.md) — stack choices, with the
@@ -53,4 +54,17 @@ identical semantics to the authoritative game.
 
 ## Status
 
-Early. The rules research and the card deck are done; the engine is next.
+**Stage 0 (the rules engine) — complete and green.** The pure reducer, all action cards including
+the full-pile Flip inversion, challenges, UNO call/callout, scoring, and view redaction with both
+information channels — official Uno Flip shipping as the first rule pack.
+
+**Stage 1 (network + UI MVP) — complete and green.** `packages/protocol` (zod wire schemas; the
+client speaks card-key aliases, never deck ids), the `GameRoom` Durable Object (SQLite-backed
+append-only log + snapshot, hibernatable WebSockets, reconnect-by-clientId, per-recipient
+redaction), the single Worker serving the SPA + `/api` + `/ws`, and the React client: lobby, board
+with parametric-SVG cards, the read-only table view for a screenshare, and an event→callout feed.
+
+The Durable Object tests run in real `workerd` and include surviving eviction mid-game; a Playwright
+pair play a full round to completion through the actual UI. **147 unit/integration tests + 2 e2e
+pass; `tsc`, `vitest`, and `eslint` are all clean.** Next up is Stage 2 (feel: turn timers, sound,
+reconnection grace, house-rule toggles, and the full a11y pass).

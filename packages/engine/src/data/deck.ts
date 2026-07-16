@@ -166,20 +166,22 @@ const DARK_COLORS: readonly string[] = ['pink', 'teal', 'orange', 'purple']
 
 function parseFace(text: string, side: Side): Face {
   const parts = text.trim().split(/\s+/)
+  const head = parts[0] ?? ''
 
-  if (parts[0] === 'wild') {
+  if (head === 'wild') {
     // `wild` alone, or `wild draw2` (light) / `wild drawColor` — the table writes the latter
     // two as single tokens, so a bare `wild` here is the plain wild.
     if (parts.length !== 1) throw new Error(`bad wild face: "${text}"`)
     return { color: null, kind: 'wild' }
   }
-  if (parts[0] === 'wildDraw2' || parts[0] === 'wildDrawColor') {
+  if (head === 'wildDraw2' || head === 'wildDrawColor') {
     if (parts.length !== 1) throw new Error(`bad wild face: "${text}"`)
-    return { color: null, kind: parts[0] as Kind }
+    return { color: null, kind: head }
   }
 
-  const [color, rest] = parts
   if (parts.length !== 2) throw new Error(`bad face: "${text}"`)
+  const color = head
+  const rest = parts[1] ?? ''
 
   const legal = side === 'light' ? LIGHT_COLORS : DARK_COLORS
   if (!legal.includes(color)) throw new Error(`"${color}" is not a ${side}-side colour: "${text}"`)
@@ -205,12 +207,12 @@ function parseDeck(): Card[] {
     if (halves.length !== 2) throw new Error(`line ${i + 1}: expected one "/": "${line}"`)
 
     // The table writes light wilds as `wild draw2`; normalise to a single token.
-    const lightText = halves[0].trim().replace(/^wild draw2$/, 'wildDraw2')
+    const lightText = (halves[0] ?? '').trim().replace(/^wild draw2$/, 'wildDraw2')
 
     return {
       id: `c${String(i).padStart(3, '0')}`,
       light: parseFace(lightText, 'light'),
-      dark: parseFace(halves[1], 'dark'),
+      dark: parseFace(halves[1] ?? '', 'dark'),
     }
   })
 }
