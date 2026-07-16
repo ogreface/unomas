@@ -49,11 +49,13 @@ async function readState(stub: ReturnType<typeof stubFor>): Promise<GameState> {
 }
 
 describe('GameRoom — routing & lobby', () => {
-  it('404s a websocket for a room that was never created', async () => {
+  it('rejects join for a room that was never created, fatally', async () => {
     const stub = stubFor('GHOST')
-    const res = await stub.fetch('https://room/ws/GHOST', { headers: { Upgrade: 'websocket' } })
-    expect(res.status).toBe(404)
-    expect(res.webSocket).toBeFalsy()
+    const c = await Client.connect(stub, 'GHOST')
+    c.send({ t: 'join', clientId: 'client-x', nickname: 'Nobody' })
+    const err = await c.waitFor('error')
+    expect(err.code).toBe('not_found')
+    expect(err.fatal).toBe(true)
   })
 
   it('seats joining players and broadcasts the roster', async () => {

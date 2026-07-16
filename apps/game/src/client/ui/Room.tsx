@@ -65,6 +65,20 @@ function NicknameGate({
 function ConnectedRoom({ code, nickname }: { code: string; nickname: string }) {
   const room = useRoom({ code, role: 'player', nickname, enabled: true })
 
+  if (room.fatal) {
+    return (
+      <main className="screen screen--center">
+        <div className="panel">
+          <h1 className="brand">Flipside</h1>
+          <p className="error-text">{room.fatal.message}</p>
+          <button className="btn btn--primary btn--block" onClick={() => navigate('/')}>
+            Back to start
+          </button>
+        </div>
+      </main>
+    )
+  }
+
   const banner =
     room.status !== 'open' ? (
       <div className="conn-banner">{room.status === 'connecting' ? 'Connecting…' : 'Reconnecting…'}</div>
