@@ -19,7 +19,7 @@ export function Home() {
     try {
       rememberNickname(name)
       const created = await createRoom()
-      navigate(`/r/${created}`)
+      navigate(`/r/${created}${location.search}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not create a room.')
       setBusy(false)
@@ -31,7 +31,7 @@ export function Home() {
     const normalized = normalizeCode(code)
     if (!normalized) return setError('That code doesn’t look right.')
     rememberNickname(name)
-    navigate(`/r/${normalized}`)
+    navigate(`/r/${normalized}${location.search}`)
   }
 
   return (
