@@ -202,6 +202,28 @@ describe('GameRoom — durability', () => {
   })
 })
 
+describe('GameRoom — multiple connections', () => {
+  it('lets one player hold two sockets at once without dropping either', async () => {
+    const { stub, a } = await seatTwo('MULT')
+
+    // A second socket for the same clientId — e.g. a second tab or a second device.
+    const a2 = await Client.connect(stub, 'MULT')
+    a2.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
+    await a2.waitFor('welcome')
+
+    // The original socket is not evicted; it still round-trips, and Ann stays connected.
+    a.send({ t: 'resync', lastSeq: 0 })
+    const roster = await a.waitFor('roster')
+    expect(roster.players.find(p => p.name === 'Ann')?.connected).toBe(true)
+
+    // Closing one of Ann's sockets leaves her connected through the other.
+    a2.close()
+    a.send({ t: 'resync', lastSeq: 0 })
+    const roster2 = await a.waitFor('roster')
+    expect(roster2.players.find(p => p.name === 'Ann')?.connected).toBe(true)
+  })
+})
+
 describe('GameRoom — spectators', () => {
   it('a spectator sees the table but never a hand', async () => {
     const { stub, a, b } = await seatTwo('SPEC')

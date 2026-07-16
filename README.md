@@ -43,6 +43,28 @@ SVG, so a theme is a block of CSS variables and a custom card is just data. Late
 run in a QuickJS sandbox — the same engine on the server and in the browser, so a local preview has
 identical semantics to the authoritative game.
 
+## Running it locally
+
+```bash
+pnpm install
+pnpm dev            # vite + @cloudflare/vite-plugin: the real Worker + Durable Object in workerd
+```
+
+Open `http://localhost:5173`. One player creates a room and shares the 4-letter code; others join
+with it. The read-only projector for a shared screen is at `/r/<CODE>/table`.
+
+**Testing with several players in one browser.** Two tabs in the same browser share `localStorage`,
+so they are the *same* player. To be different players without separate profiles, add an `?as=`
+label per tab: open `http://localhost:5173/?as=ann` and `…/?as=bo` in two tabs and they're two
+distinct seats. (Production URLs carry no such param and use one stable, seat-reclaiming identity.)
+For a true test, run `pnpm --filter @flipside/game dev -- --host` and hit your machine's LAN address
+from real phones.
+
+```bash
+pnpm -r test                            # engine + protocol + Durable Object tests (DO runs in real workerd)
+pnpm --filter @flipside/game test:e2e   # Playwright: browser contexts play a real game
+```
+
 ## Docs
 
 - **[docs/plan.md](docs/plan.md)** — the implementation plan and staging
