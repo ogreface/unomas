@@ -20,8 +20,12 @@ export function Board({ room }: { room: RoomState }) {
   const canPlay = (phase.t === 'awaitingPlay' || phase.t === 'awaitingDrawnCardChoice') && myTurn
   const canDraw = phase.t === 'awaitingPlay' && myTurn
   const canPass = phase.t === 'awaitingDrawnCardChoice' && myTurn
-  const canCallUno =
-    (myTurn && me?.handCount === 2) || (view.unoWindow === view.you && me?.handCount === 1)
+  // "UNO!" is a declaration you make as you go down to your last card: pre-emptively on your turn
+  // while holding two, or — if you forgot — as a rescue while your one-card window is still open,
+  // before an opponent calls you out. Once you've said it, stop nagging.
+  const saidUno = me?.saidUno ?? false
+  const unoRescue = view.unoWindow === view.you && me?.handCount === 1 && !saidUno
+  const canCallUno = (myTurn && me?.handCount === 2 && !saidUno) || unoRescue
 
   function play(card: CardView, color?: Color) {
     setPendingWild(null)
@@ -77,9 +81,20 @@ export function Board({ room }: { room: RoomState }) {
           </button>
         )}
         {canCallUno && (
-          <button className="btn btn--uno" onClick={() => room.send({ t: 'callUno' })}>
-            UNO!
-          </button>
+          <>
+            {unoRescue && (
+              <div className="prompt prompt--warn">
+                One card left — say UNO before an opponent catches you!
+              </div>
+            )}
+            <button
+              className="btn btn--uno"
+              title="Declare UNO as you drop to your last card. Forget, and an opponent can catch you out for a penalty."
+              onClick={() => room.send({ t: 'callUno' })}
+            >
+              UNO!
+            </button>
+          </>
         )}
       </div>
 
@@ -146,7 +161,12 @@ function TopBar({
       <span className={`side-badge side-badge--${view.side}`}>{view.side}</span>
       <span className="turn-label">{turnLabel}</span>
       <span className="dir">{view.direction === 1 ? '↻' : '↺'}</span>
-      {view.activeColor && <span className="active-color" style={{ background: `var(--c-${view.activeColor})` }} />}
+      {view.activeColor && (
+        <span className="active-color-tag" title="The colour in play right now">
+          <span className="active-color" style={{ background: `var(--c-${view.activeColor})` }} />
+          {view.activeColor}
+        </span>
+      )}
     </header>
   )
 }

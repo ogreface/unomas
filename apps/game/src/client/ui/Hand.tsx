@@ -20,17 +20,20 @@ export function Hand({
   onPlay: (card: CardView) => void
 }) {
   const legal = new Set(legalPlays)
-  const overlap = cards.length > 7 ? -34 : -18
+  const overlap = cards.length > 7 ? -26 : -18
 
   return (
     <div className="hand" role="group" aria-label="Your hand">
       {cards.map((card, i) => {
         const playable = canPlay && legal.has(card.key)
+        // Cards fan left-to-right, each stacking over the previous. Lifted (playable) cards jump a
+        // whole band above so a dimmed neighbour never clips the raised card's face.
+        const zIndex = (playable ? 100 : 0) + i
         return (
           <span
             key={card.key || i}
             className={`hand__slot${playable ? ' hand__slot--playable' : ''}`}
-            style={{ marginLeft: i === 0 ? 0 : overlap }}
+            style={{ marginLeft: i === 0 ? 0 : overlap, zIndex }}
           >
             <Card
               face={card.face}

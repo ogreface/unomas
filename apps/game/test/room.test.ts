@@ -243,4 +243,18 @@ describe('GameRoom — spectators', () => {
       expect(p.visible).toHaveLength(p.handCount) // inactive faces — public information
     }
   })
+
+  it('serves the table view even when the spectator shares a seated player’s clientId', async () => {
+    // The projected table view usually runs in the same browser as a player, so it carries that
+    // player's clientId. The role, not the clientId, must decide: it gets tableSync, not a hand.
+    const { stub, a, b } = await seatTwo('SPEC2')
+    await startGame(a, b)
+
+    const s = await Client.connect(stub, 'SPEC2')
+    s.send({ t: 'join', clientId: 'client-a', nickname: 'Table', role: 'spectator' })
+    const welcome = await s.waitFor('welcome')
+    expect(welcome.role).toBe('spectator')
+    const tableSync = await s.waitFor('tableSync')
+    expect(tableSync.table.players).toHaveLength(2)
+  })
 })
