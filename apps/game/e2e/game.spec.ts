@@ -102,6 +102,34 @@ test('two players finish a real round together', async ({ browser }) => {
   await ctxB.close()
 })
 
+test('two players share one browser via the ?as= testing param', async ({ browser }) => {
+  // A single context => shared localStorage. Without `?as` both tabs would collapse to one player;
+  // with distinct `?as` labels they are two, which is how you test locally in one browser.
+  const ctx = await browser.newContext()
+  const a = await ctx.newPage()
+  const b = await ctx.newPage()
+
+  await a.goto('/?as=ann')
+  await a.getByLabel('Your name').fill('Ann')
+  await a.getByRole('button', { name: 'Create a room' }).click()
+  await expect(a.locator('.room-code')).toBeVisible()
+  const code = (await a.locator('.room-code').textContent())?.trim()
+  if (!code) throw new Error('no code')
+
+  await b.goto('/?as=bo')
+  await b.getByLabel('Your name').fill('Bo')
+  await b.locator('.code-input').fill(code)
+  await b.getByRole('button', { name: 'Join' }).click()
+
+  // Two genuinely distinct players in the same browser.
+  await expect(a.locator('.roster li')).toHaveCount(2)
+  await a.getByRole('button', { name: /Start game/ }).click()
+  await expect(a.locator('.board')).toBeVisible()
+  await expect(b.locator('.board')).toBeVisible()
+
+  await ctx.close()
+})
+
 test('the table view projects a live game without leaking a hand', async ({ browser }) => {
   const ctxA = await browser.newContext()
   const ctxB = await browser.newContext()

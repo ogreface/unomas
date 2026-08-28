@@ -48,7 +48,12 @@ export function Piles({
       <div className="pile">
         <div className="pile__label">
           Discard · {discardCount}
-          {activeColor && <span className="active-color" style={{ background: `var(--c-${activeColor})` }} />}
+          {activeColor && (
+            <span className="active-color-tag" title="The colour you must match to play">
+              <span className="active-color" style={{ background: `var(--c-${activeColor})` }} />
+              play {activeColor}
+            </span>
+          )}
         </div>
         <div className="pile__stack">
           <Card face={discardTop.face} side={side} width={96} />

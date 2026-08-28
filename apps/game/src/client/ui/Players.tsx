@@ -35,7 +35,11 @@ export function Players({
             <span className="opponent__count">{p.handCount}</span>
             {p.saidUno && <span className="tag tag--uno">UNO</span>}
             {unoWindow === p.id && (
-              <button className="btn btn--tiny btn--warn" onClick={() => onCallout(p.id)}>
+              <button
+                className="btn btn--tiny btn--warn"
+                title={`${p.name} is down to one card without saying UNO — catch them and they draw penalty cards`}
+                onClick={() => onCallout(p.id)}
+              >
                 Call out!
               </button>
             )}

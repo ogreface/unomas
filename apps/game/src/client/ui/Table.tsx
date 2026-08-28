@@ -34,7 +34,12 @@ export function Table({ code }: { code: string }) {
         <span className="room-code">{code}</span>
         <span className={`side-badge side-badge--${table.side}`}>{table.side} side</span>
         <span className="dir">{table.direction === 1 ? '↻' : '↺'}</span>
-        {table.activeColor && <span className="active-color" style={{ background: `var(--c-${table.activeColor})` }} />}
+        {table.activeColor && (
+          <span className="active-color-tag" title="The colour in play right now">
+            <span className="active-color" style={{ background: `var(--c-${table.activeColor})` }} />
+            {table.activeColor}
+          </span>
+        )}
       </header>
 
       <section className="table-players">

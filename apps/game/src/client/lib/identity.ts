@@ -7,11 +7,19 @@
 const CLIENT_ID_KEY = 'flipside.clientId'
 const NICKNAME_KEY = 'flipside.nickname'
 
+/**
+ * Two tabs in one browser share `localStorage`, so they would share a `clientId` and be treated as
+ * the same player. For local testing, an `?as=<label>` query param namespaces the id, letting one
+ * browser hold several distinct players. Production URLs carry no such param and use the single,
+ * seat-reclaiming id.
+ */
 export function clientId(): string {
-  let id = localStorage.getItem(CLIENT_ID_KEY)
+  const as = new URLSearchParams(location.search).get('as')
+  const key = as ? `${CLIENT_ID_KEY}.${as}` : CLIENT_ID_KEY
+  let id = localStorage.getItem(key)
   if (!id) {
     id = crypto.randomUUID()
-    localStorage.setItem(CLIENT_ID_KEY, id)
+    localStorage.setItem(key, id)
   }
   return id
 }

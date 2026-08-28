@@ -7,10 +7,10 @@
   --c-yellow: #f2b705;
   --c-green: #3aa544;
   --c-blue: #2472d6;
-  --c-pink: #e0489e;
-  --c-teal: #12b3a6;
-  --c-orange: #ee7f2d;
-  --c-purple: #8043c0;
+  --c-pink: #c23583;
+  --c-teal: #0d8b81;
+  --c-orange: #cf6a1c;
+  --c-purple: #6a34a3;
 
   --bg: #0f1226;
   --bg-2: #191d38;
@@ -22,6 +22,7 @@
   --warn: #ff7043;
 
   --card-edge: #ffffff;
+  --card-edge-dark: #0a0a12;
   --card-oval: #fbfbff;
   --card-ink-onwild: #ffffff;
   --card-wild-bg: #17171d;
@@ -347,6 +348,15 @@ input {
   border-radius: 50%;
   border: 2px solid #fff3;
 }
+.active-color-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--ink-dim);
+}
 
 .opponents {
   display: flex;
@@ -448,6 +458,9 @@ input {
   text-align: center;
   font-weight: 600;
 }
+.prompt--warn {
+  color: var(--warn);
+}
 
 .hand {
   margin-top: auto;
@@ -459,6 +472,7 @@ input {
   min-height: 130px;
 }
 .hand__slot {
+  position: relative;
   transition: transform 0.12s ease;
 }
 .hand__slot--playable {

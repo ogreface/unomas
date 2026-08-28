@@ -49,11 +49,13 @@ async function readState(stub: ReturnType<typeof stubFor>): Promise<GameState> {
 }
 
 describe('GameRoom — routing & lobby', () => {
-  it('404s a websocket for a room that was never created', async () => {
+  it('rejects join for a room that was never created, fatally', async () => {
     const stub = stubFor('GHOST')
-    const res = await stub.fetch('https://room/ws/GHOST', { headers: { Upgrade: 'websocket' } })
-    expect(res.status).toBe(404)
-    expect(res.webSocket).toBeFalsy()
+    const c = await Client.connect(stub, 'GHOST')
+    c.send({ t: 'join', clientId: 'client-x', nickname: 'Nobody' })
+    const err = await c.waitFor('error')
+    expect(err.code).toBe('not_found')
+    expect(err.fatal).toBe(true)
   })
 
   it('seats joining players and broadcasts the roster', async () => {
@@ -202,6 +204,28 @@ describe('GameRoom — durability', () => {
   })
 })
 
+describe('GameRoom — multiple connections', () => {
+  it('lets one player hold two sockets at once without dropping either', async () => {
+    const { stub, a } = await seatTwo('MULT')
+
+    // A second socket for the same clientId — e.g. a second tab or a second device.
+    const a2 = await Client.connect(stub, 'MULT')
+    a2.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
+    await a2.waitFor('welcome')
+
+    // The original socket is not evicted; it still round-trips, and Ann stays connected.
+    a.send({ t: 'resync', lastSeq: 0 })
+    const roster = await a.waitFor('roster')
+    expect(roster.players.find(p => p.name === 'Ann')?.connected).toBe(true)
+
+    // Closing one of Ann's sockets leaves her connected through the other.
+    a2.close()
+    a.send({ t: 'resync', lastSeq: 0 })
+    const roster2 = await a.waitFor('roster')
+    expect(roster2.players.find(p => p.name === 'Ann')?.connected).toBe(true)
+  })
+})
+
 describe('GameRoom — spectators', () => {
   it('a spectator sees the table but never a hand', async () => {
     const { stub, a, b } = await seatTwo('SPEC')
@@ -218,5 +242,19 @@ describe('GameRoom — spectators', () => {
       expect(p.handCount).toBeGreaterThanOrEqual(7) // dealt 7; an opening Draw can add more
       expect(p.visible).toHaveLength(p.handCount) // inactive faces — public information
     }
+  })
+
+  it('serves the table view even when the spectator shares a seated player’s clientId', async () => {
+    // The projected table view usually runs in the same browser as a player, so it carries that
+    // player's clientId. The role, not the clientId, must decide: it gets tableSync, not a hand.
+    const { stub, a, b } = await seatTwo('SPEC2')
+    await startGame(a, b)
+
+    const s = await Client.connect(stub, 'SPEC2')
+    s.send({ t: 'join', clientId: 'client-a', nickname: 'Table', role: 'spectator' })
+    const welcome = await s.waitFor('welcome')
+    expect(welcome.role).toBe('spectator')
+    const tableSync = await s.waitFor('tableSync')
+    expect(tableSync.table.players).toHaveLength(2)
   })
 })

@@ -25,6 +25,8 @@ export interface RoomState {
   roster: RosterState | null
   /** The most recent rejected action, cleared as the player acts again. */
   error: { code: string; message: string } | null
+  /** A connection-fatal error (bad room, already started, room full). The socket is closed; no retry. */
+  fatal: { code: string; message: string } | null
   /** Rolling window of recent events for callouts/animations. */
   feed: FeedEvent[]
   send: (msg: ClientMessageInput) => void
@@ -51,6 +53,7 @@ export function useRoom(opts: {
   const [table, setTable] = useState<TableView | null>(null)
   const [roster, setRoster] = useState<RosterState | null>(null)
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
+  const [fatal, setFatal] = useState<{ code: string; message: string } | null>(null)
   const [feed, setFeed] = useState<FeedEvent[]>([])
 
   const connRef = useRef<Connection | null>(null)
@@ -100,7 +103,14 @@ export function useRoom(opts: {
           pushEvents(msg.events)
           break
         case 'error':
-          setError({ code: msg.code, message: msg.message })
+          if (msg.fatal) {
+            // A fatal join error would otherwise loop forever: reconnect → rejoin → rejected →
+            // reconnect. Stop the socket and surface the reason instead of a stuck banner.
+            setFatal({ code: msg.code, message: msg.message })
+            connRef.current?.close()
+          } else {
+            setError({ code: msg.code, message: msg.message })
+          }
           break
       }
     },
@@ -129,5 +139,5 @@ export function useRoom(opts: {
     connRef.current?.send(msg)
   }, [])
 
-  return { status, you, seat, host, code: opts.code, view, table, roster, error, feed, send }
+  return { status, you, seat, host, code: opts.code, view, table, roster, error, fatal, feed, send }
 }

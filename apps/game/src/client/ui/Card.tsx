@@ -85,6 +85,13 @@ export const Card = memo(function Card({
   const kicker = kickerFor(face.kind)
   const fill = isWild ? 'var(--card-wild-bg)' : `var(--c-${face.color})`
   const wheel = side === 'light' ? WHEEL_LIGHT : WHEEL_DARK
+  // Dark-side faces get a near-black border; a white one washes out against the darker palette.
+  const edge = side === 'dark' ? 'var(--card-edge-dark)' : 'var(--card-edge)'
+  // The ink colour for the central mark — the card's own colour, or white on a wild's wheel.
+  const ink = isWild ? 'var(--card-ink-onwild)' : `var(--c-${face.color})`
+  // Skip / skip-everyone / flip are drawn as vector marks, not glyphs, so they read distinctly:
+  // a single ban for skip, a wider double ring for skip-everyone, a turning card for flip.
+  const markCy = kicker ? 70 : 76
 
   const classes = ['card']
   if (selected) classes.push('card--selected')
@@ -94,7 +101,7 @@ export const Card = memo(function Card({
 
   const content = (
     <svg viewBox="0 0 100 150" width={width} height={height} role="img" aria-label={ariaLabel ?? label(face)}>
-      <rect x="2" y="2" width="96" height="146" rx="12" fill={fill} stroke="var(--card-edge)" strokeWidth="3" />
+      <rect x="2" y="2" width="96" height="146" rx="12" fill={fill} stroke={edge} strokeWidth="3" />
       {isWild ? (
         <g>
           {/* The four-colour wheel behind the central oval. */}
@@ -113,19 +120,17 @@ export const Card = memo(function Card({
         <ellipse cx="50" cy="75" rx="34" ry="52" fill="var(--card-oval)" transform="rotate(-20 50 75)" />
       )}
 
-      {glyph && (
-        <text
-          x="50"
-          y={kicker ? 78 : 84}
-          textAnchor="middle"
-          className="card__glyph"
-          fill={isWild ? 'var(--card-ink-onwild)' : `var(--c-${face.color})`}
-        >
+      {face.kind === 'skip' || face.kind === 'skipEveryone' ? (
+        <SkipMark cy={markCy} everyone={face.kind === 'skipEveryone'} color={ink} />
+      ) : face.kind === 'flip' ? (
+        <FlipMark cy={markCy} color={ink} />
+      ) : glyph ? (
+        <text x="50" y={kicker ? 78 : 84} textAnchor="middle" className="card__glyph" fill={ink}>
           {glyph}
         </text>
-      )}
+      ) : null}
       {kicker && (
-        <text x="50" y="102" textAnchor="middle" className="card__kicker" fill="var(--card-ink-onwild)">
+        <text x="50" y="102" textAnchor="middle" className="card__kicker" fill={ink}>
           {kicker}
         </text>
       )}
@@ -147,6 +152,40 @@ export const Card = memo(function Card({
     </button>
   )
 })
+
+/**
+ * The skip mark: a prohibition ring with a diagonal bar. Skip-everyone (the dark-side card that skips
+ * *all* other players) gets a second, wider ring around it — the game's own visual for "bigger skip".
+ */
+function SkipMark({ cy, everyone, color }: { cy: number; everyone: boolean; color: string }) {
+  const r = everyone ? 15 : 22
+  const d = r * 0.707 // slash endpoints at 45°, sitting inside the ring
+  return (
+    <g fill="none" stroke={color} strokeLinecap="round">
+      {everyone && <circle cx={50} cy={cy} r={r + 9} strokeWidth={4} opacity={0.55} />}
+      <circle cx={50} cy={cy} r={r} strokeWidth={6} />
+      <line x1={50 - d} y1={cy - d} x2={50 + d} y2={cy + d} strokeWidth={6} />
+    </g>
+  )
+}
+
+/**
+ * The flip mark: a tilted card ringed by a looping arrow, reading as a card turning over rather than
+ * the circular spinner it used to share with skip.
+ */
+function FlipMark({ cy, color }: { cy: number; color: string }) {
+  return (
+    <g fill="none" stroke={color} strokeWidth={4.5} strokeLinecap="round" strokeLinejoin="round">
+      {/* the card, caught mid-turn */}
+      <rect x={41} y={cy - 15} width={18} height={30} rx={3} transform={`rotate(-20 50 ${cy})`} />
+      {/* an ellipse of two arcs looping around it, each capped with an arrowhead */}
+      <path d={`M26 ${cy} A 26 19 0 0 1 74 ${cy}`} />
+      <path d={`M74 ${cy} A 26 19 0 0 1 26 ${cy}`} />
+      <path d={`M74 ${cy} l 3 -8 M74 ${cy} l -8 -2`} />
+      <path d={`M26 ${cy} l -3 8 M26 ${cy} l 8 2`} />
+    </g>
+  )
+}
 
 /** The tiny corner mark. Keeps numbers as digits and actions as a compact symbol. */
 function cornerFor(face: Face): string {
