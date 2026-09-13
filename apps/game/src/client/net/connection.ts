@@ -11,6 +11,8 @@ export interface ConnectOptions {
   nickname: string
   onMessage: (msg: ServerMessage) => void
   onStatus: (status: ConnStatus) => void
+  /** The socket opened but we could not even say who we are. Unrecoverable, and never silent. */
+  onJoinFailed: (message: string) => void
   /** Latest applied sequence, read at (re)connect time so the server can resync from it. */
   lastSeq: () => number
 }
@@ -32,15 +34,24 @@ export function connect(opts: ConnectOptions): Connection {
 
   ws.addEventListener('open', () => {
     opts.onStatus('open')
-    ws.send(
-      JSON.stringify({
+    let frame: string
+    try {
+      frame = JSON.stringify({
         t: 'join',
         clientId: clientId(),
         nickname: opts.nickname,
         role: opts.role,
         lastSeq: opts.lastSeq(),
-      } satisfies ClientMessageInput),
-    )
+      } satisfies ClientMessageInput)
+    } catch (e) {
+      // A throw here used to vanish into the event dispatch: the socket stayed open, `join` was
+      // never sent, and the player sat in a lobby with an empty roster and no Start button with
+      // nothing on screen to say why. Whatever broke, say so and stop.
+      opts.onJoinFailed(e instanceof Error ? e.message : 'could not identify this browser')
+      ws.close()
+      return
+    }
+    ws.send(frame)
   })
 
   ws.addEventListener('close', () => opts.onStatus('closed'))

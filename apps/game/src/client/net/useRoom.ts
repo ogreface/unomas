@@ -117,6 +117,10 @@ export function useRoom(opts: {
     [pushEvents],
   )
 
+  const onJoinFailed = useCallback((message: string) => {
+    setFatal({ code: 'join_failed', message: `This browser couldn't join the room: ${message}` })
+  }, [])
+
   useEffect(() => {
     if (!opts.enabled) return
     const conn = connect({
@@ -125,6 +129,7 @@ export function useRoom(opts: {
       nickname: opts.nickname,
       onMessage,
       onStatus: setStatus,
+      onJoinFailed,
       lastSeq: () => lastSeqRef.current,
     })
     connRef.current = conn
@@ -133,7 +138,7 @@ export function useRoom(opts: {
       connRef.current = null
     }
     // Reconnect only if the identity of the connection changes, not on every nickname keystroke.
-  }, [opts.enabled, opts.code, opts.role, opts.nickname, onMessage])
+  }, [opts.enabled, opts.code, opts.role, opts.nickname, onMessage, onJoinFailed])
 
   const send = useCallback((msg: ClientMessageInput) => {
     connRef.current?.send(msg)
