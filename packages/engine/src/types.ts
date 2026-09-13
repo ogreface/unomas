@@ -101,6 +101,12 @@ export interface RuleOptions {
   scoreLimit: number
   /** Cards dealt to each player at the start of a round. */
   handSize: number
+  /**
+   * How long a player has to make each decision, in milliseconds, before the clock forfeits it for
+   * them. 0 disables the clock entirely. The *duration* is a rule option; the clock that enforces
+   * it is the Durable Object's, because the engine has no access to the time of day.
+   */
+  turnTimeoutMs: number
 }
 
 export const DEFAULT_OPTIONS: RuleOptions = {
@@ -115,6 +121,7 @@ export const DEFAULT_OPTIONS: RuleOptions = {
   stackingEnabled: false,
   scoreLimit: 500,
   handSize: 7,
+  turnTimeoutMs: 30_000,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -182,6 +189,11 @@ export type Action =
   | { type: 'acceptDraw'; player: PlayerId }
   | { type: 'callUno'; player: PlayerId }
   | { type: 'callout'; player: PlayerId; target: PlayerId }
+  /**
+   * The clock ran out on `player`. Server-generated only — there is no wire message for it, and a
+   * client cannot ask for one. See `docs/decisions.md` #17 for what a forfeited decision does.
+   */
+  | { type: 'timeout'; player: PlayerId }
 
 export type ActionType = Action['type']
 
@@ -199,6 +211,8 @@ export type GameEvent =
   | { t: 'cardPlayed'; player: PlayerId; card: CardId; declaredColor: Color | null }
   | { t: 'cardsDrawn'; player: PlayerId; count: number; cards: CardId[] }
   | { t: 'passed'; player: PlayerId }
+  /** The clock ran out; the events that follow are the forfeit the engine took on their behalf. */
+  | { t: 'timedOut'; player: PlayerId; phase: PhaseName }
   | { t: 'flipped'; side: Side; newTop: CardId }
   | { t: 'colorChosen'; player: PlayerId; color: Color }
   | { t: 'directionChanged'; direction: Direction }

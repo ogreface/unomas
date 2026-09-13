@@ -87,6 +87,14 @@ redaction), the single Worker serving the SPA + `/api` + `/ws`, and the React cl
 with parametric-SVG cards, the read-only table view for a screenshare, and an event→callout feed.
 
 The Durable Object tests run in real `workerd` and include surviving eviction mid-game; a Playwright
-pair play a full round to completion through the actual UI. **147 unit/integration tests + 2 e2e
-pass; `tsc`, `vitest`, and `eslint` are all clean.** Next up is Stage 2 (feel: turn timers, sound,
-reconnection grace, house-rule toggles, and the full a11y pass).
+pair play a full round to completion through the actual UI.
+
+**Stage 2 has started with the turn clock.** Somebody's phone always dies mid-round, so every
+outstanding decision runs on a 30-second server-held deadline (a Durable Object storage alarm, not a
+`setTimeout`), counted down on every screen at once — the top bar, the tile of the player it is
+about, and large on the projected table. When it runs out the game forfeits exactly that one
+decision: draw and pass rather than play a card for them. See [decisions #17](docs/decisions.md) for
+the ruling and `turnTimeoutMs` for the knob.
+
+**187 unit/integration tests + 5 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.** Still to
+come in Stage 2: sound, reconnection grace, house-rule toggles, and the full a11y pass.

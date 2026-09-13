@@ -37,6 +37,8 @@ export function describe(event: EventView, nameOf: (id: string) => string): stri
       return `${nameOf(event.player)} drew ${event.count}`
     case 'passed':
       return `${nameOf(event.player)} passed`
+    case 'timedOut':
+      return `${nameOf(event.player)} ran out of time`
     case 'flipped':
       return `Flipped to the ${event.side} side`
     case 'colorChosen':

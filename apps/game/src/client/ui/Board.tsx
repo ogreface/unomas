@@ -7,10 +7,14 @@ import { Players } from './Players.js'
 import { Hand } from './Hand.js'
 import { ColorPicker } from './ColorPicker.js'
 import { Feed } from './Feed.js'
+import { TurnClock, useTurnClock } from './TurnClock.js'
+import type { ClockReading } from './TurnClock.js'
 
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
   const [pendingWild, setPendingWild] = useState<CardView | null>(null)
+  // One ticking clock per screen, read once and handed down — see `TurnClock.tsx`.
+  const clock = useTurnClock(room.timer)
 
   const nameOf = (id: string) => view.players.find(p => p.id === id)?.name ?? '—'
   const me = view.players.find(p => p.id === view.you)
@@ -39,7 +43,7 @@ export function Board({ room }: { room: RoomState }) {
 
   return (
     <main className="board">
-      <TopBar view={view} nameOf={nameOf} myTurn={myTurn} onLeave={() => navigate('/')} />
+      <TopBar view={view} nameOf={nameOf} myTurn={myTurn} clock={clock} onLeave={() => navigate('/')} />
 
       <Players
         players={view.players}
@@ -47,6 +51,7 @@ export function Board({ room }: { room: RoomState }) {
         side={view.side}
         turn={view.turn}
         unoWindow={view.unoWindow}
+        clock={clock}
         onCallout={id => room.send({ t: 'callout', target: id })}
       />
 
@@ -144,15 +149,21 @@ function TopBar({
   view,
   nameOf,
   myTurn,
+  clock,
   onLeave,
 }: {
   view: PlayerView
   nameOf: (id: string) => string
   myTurn: boolean
+  clock: ClockReading | null
   onLeave: () => void
 }) {
   const turnLabel =
     view.turn === null ? '—' : myTurn ? 'Your turn' : `${nameOf(view.turn)}’s turn`
+  // The clock belongs to whoever owes the decision, which is not always the player at the turn: a
+  // colour choice or a challenge is owed by somebody else while the turn sits still.
+  const onTheClock = clock ? clock.timer.player : null
+  const clockLabel = onTheClock === view.you ? 'You' : onTheClock ? nameOf(onTheClock) : ''
   return (
     <header className="topbar">
       <button className="btn btn--ghost btn--tiny" onClick={onLeave}>
@@ -160,6 +171,7 @@ function TopBar({
       </button>
       <span className={`side-badge side-badge--${view.side}`}>{view.side}</span>
       <span className="turn-label">{turnLabel}</span>
+      {clock && <TurnClock clock={clock} label={clockLabel} size={34} />}
       <span className="dir">{view.direction === 1 ? '↻' : '↺'}</span>
       {view.activeColor && (
         <span className="active-color-tag" title="The colour in play right now">
