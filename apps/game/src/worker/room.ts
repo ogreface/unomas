@@ -16,18 +16,25 @@
  * Redaction is not optional: a player must never receive another player's active faces, and a
  * spectator must never receive anyone's hand. `view.ts` in the engine owns those rules; this object
  * only routes their output to the right sockets.
+ *
+ * It is also the room's **clock**. Somebody's phone always dies mid-round, so every outstanding
+ * decision is on a timer: the object stores a deadline, arms a storage alarm for it, ships the time
+ * remaining to every screen, and — if the alarm beats the player to it — hands the engine a
+ * `timeout` action that forfeits exactly that one decision. See `#armClock` and `alarm` below.
  */
 
 import { DurableObject } from 'cloudflare:workers'
 import {
+  DEFAULT_OPTIONS,
   LocalRuleHost,
   UNOFLIP_PACK_ID,
   cardIdForKey,
+  playerToAct,
   redactEvents,
   tableView,
   viewFor,
 } from '@flipside/engine'
-import type { Action, GameEvent, GameState } from '@flipside/engine'
+import type { Action, GameEvent, GameState, PhaseName } from '@flipside/engine'
 import {
   MAX_PLAYERS,
   MIN_PLAYERS,
@@ -39,6 +46,7 @@ import type {
   ConnectRole,
   LobbyPlayer,
   ServerMessage,
+  TimerView,
 } from '@flipside/protocol'
 import type { Env } from './env.js'
 
@@ -73,6 +81,26 @@ interface PlayerRow {
   name: string
   seat: number
   connected: number
+}
+
+/** The armed turn clock: one row, or none when nobody is on the clock. */
+interface ClockRow {
+  player: string
+  phase: PhaseName
+  duration: number
+  /** Epoch ms. Persisted rather than held in a field, because the object hibernates between moves. */
+  deadline: number
+}
+
+/**
+ * How long the room gives a player per decision. It is a rule option (so a house game can lengthen
+ * it, or switch it off with 0), read defensively: a snapshot written before the clock existed has no
+ * value for it, and that should mean "the default", not "no clock".
+ */
+function timeoutMs(state: GameState): number {
+  const ms = state.options.turnTimeoutMs
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return DEFAULT_OPTIONS.turnTimeoutMs
+  return Math.max(0, ms)
 }
 
 export class GameRoom extends DurableObject<Env> {
@@ -113,6 +141,13 @@ export class GameRoom extends DurableObject<Env> {
         id INTEGER PRIMARY KEY CHECK (id = 0),
         seq INTEGER NOT NULL,
         state TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS turn_clock (
+        id INTEGER PRIMARY KEY CHECK (id = 0),
+        player TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        duration INTEGER NOT NULL,
+        deadline INTEGER NOT NULL
       );
     `)
   }
@@ -174,7 +209,10 @@ export class GameRoom extends DurableObject<Env> {
       return
     }
 
-    if (msg.t === 'resync') return this.#sendCurrent(ws, att)
+    if (msg.t === 'resync') {
+      await this.#reassertClock()
+      return this.#sendCurrent(ws, att)
+    }
     if (msg.t === 'start') return this.#onStart(ws, att)
     return this.#onAction(ws, att, msg)
   }
@@ -214,13 +252,18 @@ export class GameRoom extends DurableObject<Env> {
   // Join / reconnect
   // -------------------------------------------------------------------------------------------
 
-  #onJoin(ws: WebSocket, msg: Extract<ClientMessage, { t: 'join' }>): void {
+  async #onJoin(ws: WebSocket, msg: Extract<ClientMessage, { t: 'join' }>): Promise<void> {
     const room = this.#room()
     if (!room) {
       this.#send(ws, { t: 'error', code: 'not_found', message: 'no such room', fatal: true })
       ws.close(1008, 'no such room')
       return
     }
+
+    // Before answering with a snapshot: make sure the running deadline still has an alarm behind it,
+    // so the countdown this socket is about to be handed is one that will actually fire. A room that
+    // was mid-turn across a deploy is exactly the case this covers.
+    await this.#reassertClock()
 
     // The projected table view joins as a spectator, and it usually runs in the same browser as one
     // of the players — so it carries that player's clientId. Honour the requested role *first*:
@@ -321,6 +364,7 @@ export class GameRoom extends DurableObject<Env> {
         return
       }
       this.#persist(next.state, { type: 'startRound' })
+      await this.#armClock(next.state, { type: 'startRound' })
       this.#broadcast(next.state, next.events)
       return
     }
@@ -349,6 +393,7 @@ export class GameRoom extends DurableObject<Env> {
 
     this.sql.exec('UPDATE room SET started = 1 WHERE id = 0')
     this.#persist(started.state, { type: 'startRound' })
+    await this.#armClock(started.state, { type: 'startRound' })
     this.#broadcast(started.state, started.events)
   }
 
@@ -372,6 +417,9 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     this.#persist(result.state, built.action)
+    // Arm before broadcasting: the frames carry the time remaining, so the clock has to be the new
+    // one by the time they are built.
+    await this.#armClock(result.state, built.action)
     this.#broadcast(result.state, result.events)
   }
 
@@ -410,11 +458,139 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   // -------------------------------------------------------------------------------------------
+  // The turn clock
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * Put the outstanding decision on the clock, or take the clock away if there is no decision left.
+   *
+   * The engine names the debtor (`playerToAct`); this only decides *when* their time is up. Two
+   * properties matter:
+   *
+   * - **A new decision gets a full window; an unrelated action does not extend the old one.** An
+   *   opponent shouting UNO or calling someone out does not change whose decision it is, so those
+   *   leave the running deadline exactly where it was — otherwise a table could keep a player's
+   *   clock topped up indefinitely, or (worse) reset it every time anyone did anything.
+   * - **The alarm is re-asserted, not re-created, for a clock that is already running.** Alarm
+   *   delivery is at-least-once and the previous one may already have been consumed by a wake we
+   *   judged stale, so `null` (a reconnect, a resync) means "make sure the current deadline still
+   *   has an alarm behind it", never "start again".
+   */
+  async #armClock(state: GameState, action: Action | null): Promise<void> {
+    const player = playerToAct(state)
+    const duration = timeoutMs(state)
+
+    if (player === null || duration === 0) return this.#clearClock()
+
+    // `callUno` and `callout` are the only actions that can leave the same player owing the same
+    // decision afterwards. Every other action begins a new one.
+    const continuing = action === null || action.type === 'callUno' || action.type === 'callout'
+    const running = this.#clock()
+    if (continuing && running && running.player === player && running.phase === state.phase.t) {
+      // A deadline already in the past is fine to pass to setAlarm: it simply fires at once.
+      await this.ctx.storage.setAlarm(running.deadline)
+      return
+    }
+
+    const deadline = Date.now() + duration
+    this.sql.exec(
+      'INSERT OR REPLACE INTO turn_clock (id, player, phase, duration, deadline) VALUES (0, ?, ?, ?, ?)',
+      player,
+      state.phase.t,
+      duration,
+      deadline,
+    )
+    await this.ctx.storage.setAlarm(deadline)
+  }
+
+  /** Re-arm whatever clock the stored game is owed, without shortening or extending it. */
+  async #reassertClock(): Promise<void> {
+    const snap = this.#snapshot()
+    if (!snap) return
+    await this.#armClock(snap.state, null)
+  }
+
+  async #clearClock(): Promise<void> {
+    this.sql.exec('DELETE FROM turn_clock WHERE id = 0')
+    await this.ctx.storage.deleteAlarm()
+  }
+
+  #clock(): ClockRow | null {
+    const rows = this.sql
+      .exec('SELECT player, phase, duration, deadline FROM turn_clock WHERE id = 0')
+      .toArray() as unknown as ClockRow[]
+    return rows[0] ?? null
+  }
+
+  /**
+   * The countdown as it goes on the wire. A **duration**, not a deadline: the room's phones do not
+   * agree on what time it is, and each client anchors this against its own monotonic clock the
+   * instant the frame arrives. Every screen therefore shows the same number.
+   */
+  #timerView(): TimerView | null {
+    const clock = this.#clock()
+    if (!clock) return null
+    return {
+      player: clock.player,
+      phase: clock.phase,
+      durationMs: clock.duration,
+      remainingMs: Math.max(0, clock.deadline - Date.now()),
+    }
+  }
+
+  /**
+   * The clock ran out. Forfeit the one outstanding decision on the absent player's behalf — the
+   * engine decides what that costs them (`doTimeout` in `reduce.ts`); this only establishes that the
+   * time really has passed.
+   *
+   * Alarms are delivered **at least once** and can wake a hibernated object early, so every exit
+   * below is a no-op that leaves the game exactly as it was:
+   *
+   * - no clock, or no game → nothing to forfeit;
+   * - the decision has moved on since the alarm was set (someone played, in the gap) → re-arm for
+   *   whoever owes the new one;
+   * - the deadline is still in the future → put the alarm back and wait it out.
+   *
+   * So a duplicate delivery cannot take two turns from anyone: the first one changes the phase, and
+   * the second finds a clock that no longer matches it.
+   */
+  override async alarm(): Promise<void> {
+    const clock = this.#clock()
+    if (!clock) return
+
+    const snap = this.#snapshot()
+    if (!snap) return this.#clearClock()
+
+    const owed = playerToAct(snap.state)
+    if (owed === null) return this.#clearClock()
+    if (owed !== clock.player || snap.state.phase.t !== clock.phase) {
+      return this.#armClock(snap.state, null)
+    }
+    if (clock.deadline > Date.now()) {
+      await this.ctx.storage.setAlarm(clock.deadline)
+      return
+    }
+
+    const action: Action = { type: 'timeout', player: clock.player }
+    const result = await ruleHost.reduce(snap.state, action)
+    if (!result.ok) {
+      // The engine refused the forfeit. Nothing here can fix that, and re-arming would spin on it
+      // every 30 seconds, so drop the clock and let the next real action start a fresh one.
+      return this.#clearClock()
+    }
+
+    this.#persist(result.state, action)
+    await this.#armClock(result.state, action)
+    this.#broadcast(result.state, result.events)
+  }
+
+  // -------------------------------------------------------------------------------------------
   // Broadcast
   // -------------------------------------------------------------------------------------------
 
   /** Fan a reduction out to every socket, redacted for exactly what that recipient may see. */
   #broadcast(state: GameState, events: GameEvent[]): void {
+    const timer = this.#timerView()
     for (const ws of this.ctx.getWebSockets()) {
       const att = ws.deserializeAttachment() as Attachment | null
       if (!att) continue
@@ -424,12 +600,14 @@ export class GameRoom extends DurableObject<Env> {
             t: 'tableEvents',
             events: redactEvents(state, events, SPECTATOR_RECIPIENT),
             table: tableView(state),
+            timer,
           })
         } else {
           this.#send(ws, {
             t: 'events',
             events: redactEvents(state, events, att.playerId),
             view: viewFor(state, att.playerId),
+            timer,
           })
         }
       } catch {
@@ -479,10 +657,11 @@ export class GameRoom extends DurableObject<Env> {
       }
       return
     }
+    const timer = this.#timerView()
     if (att.role === 'spectator') {
-      this.#send(ws, { t: 'tableSync', table: tableView(snap.state) })
+      this.#send(ws, { t: 'tableSync', table: tableView(snap.state), timer })
     } else {
-      this.#send(ws, { t: 'sync', view: viewFor(snap.state, att.playerId) })
+      this.#send(ws, { t: 'sync', view: viewFor(snap.state, att.playerId), timer })
     }
   }
 

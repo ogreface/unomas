@@ -612,6 +612,75 @@ input {
   }
 }
 
+/* ── turn clock ───────────────────────────────────────────────────────────────────────────── */
+/*
+ * One countdown, drawn at three sizes: beside the turn label, on the opponent who owes the move, and
+ * large on the projected table. The sweep is a dashed circle stroke, so the only thing that animates
+ * is one attribute — cheap enough to redraw five times a second on a phone.
+ */
+.turn-clock {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+.turn-clock svg {
+  display: block;
+  position: absolute;
+  inset: 0;
+}
+.turn-clock__track {
+  stroke: var(--edge);
+}
+.turn-clock__sweep {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 0.2s linear;
+}
+.turn-clock__num {
+  position: relative;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+/* The last ten seconds. Colour *and* a pulse, so it reads on a projector across a room and to
+   anyone who cannot tell the two colours apart. */
+.turn-clock--urgent .turn-clock__sweep {
+  stroke: var(--warn);
+}
+.turn-clock--urgent .turn-clock__num {
+  color: var(--warn);
+}
+.turn-clock--urgent {
+  animation: clock-pulse 1s ease-in-out infinite;
+}
+@keyframes clock-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-clock--urgent {
+    animation: none;
+  }
+  .turn-clock__sweep {
+    transition: none;
+  }
+}
+.table-clock {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.table-clock__who {
+  font-weight: 700;
+}
+
 /* ── table view ───────────────────────────────────────────────────────────────────────────── */
 .table-screen {
   min-height: 100%;

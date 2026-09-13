@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClientMessageInput, ConnectRole, LobbyPlayer, ServerMessage } from '@flipside/protocol'
 import type { EventView, PlayerView, TableView } from '@flipside/engine'
 import { connect, type ConnStatus, type Connection } from './connection.js'
+import { anchorTimer } from '../lib/turnClock.js'
+import type { AnchoredTimer } from '../lib/turnClock.js'
 
 export interface RosterState {
   players: LobbyPlayer[]
@@ -29,6 +31,11 @@ export interface RoomState {
   fatal: { code: string; message: string } | null
   /** Rolling window of recent events for callouts/animations. */
   feed: FeedEvent[]
+  /**
+   * The turn clock, anchored to this device the moment it arrived. Null when nobody is on the clock.
+   * Every screen in the room is counting down the same server-issued window.
+   */
+  timer: AnchoredTimer | null
   send: (msg: ClientMessageInput) => void
 }
 
@@ -55,6 +62,7 @@ export function useRoom(opts: {
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [fatal, setFatal] = useState<{ code: string; message: string } | null>(null)
   const [feed, setFeed] = useState<FeedEvent[]>([])
+  const [timer, setTimer] = useState<AnchoredTimer | null>(null)
 
   const connRef = useRef<Connection | null>(null)
   const lastSeqRef = useRef(0)
@@ -80,25 +88,32 @@ export function useRoom(opts: {
         case 'roster':
           setRoster({ players: msg.players, host: msg.host })
           setHost(msg.host)
+          setTimer(null) // nobody is on the clock in the lobby
           break
         case 'sync':
           setView(msg.view)
           setRoster(null)
+          // Anchored here, at the instant the frame landed, and never against a server timestamp —
+          // see `lib/turnClock.ts`.
+          setTimer(msg.timer ? anchorTimer(msg.timer) : null)
           lastSeqRef.current = msg.view.seq
           break
         case 'events':
           setView(msg.view)
           setRoster(null)
+          setTimer(msg.timer ? anchorTimer(msg.timer) : null)
           lastSeqRef.current = msg.view.seq
           setError(null)
           pushEvents(msg.events)
           break
         case 'tableSync':
           setTable(msg.table)
+          setTimer(msg.timer ? anchorTimer(msg.timer) : null)
           lastSeqRef.current = msg.table.seq
           break
         case 'tableEvents':
           setTable(msg.table)
+          setTimer(msg.timer ? anchorTimer(msg.timer) : null)
           lastSeqRef.current = msg.table.seq
           pushEvents(msg.events)
           break
@@ -144,5 +159,5 @@ export function useRoom(opts: {
     connRef.current?.send(msg)
   }, [])
 
-  return { status, you, seat, host, code: opts.code, view, table, roster, error, fatal, feed, send }
+  return { status, you, seat, host, code: opts.code, view, table, roster, error, fatal, feed, timer, send }
 }

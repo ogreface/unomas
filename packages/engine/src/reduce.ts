@@ -21,6 +21,7 @@ import type {
   Face,
   GameEvent,
   GameState,
+  PhaseName,
   Player,
   PlayerId,
   ReduceResult,
@@ -42,6 +43,7 @@ import {
   topCardId,
 } from './effects.js'
 import type { EffectCtx } from './effects.js'
+import { playerToAct } from './clock.js'
 import { roundPoints } from './score.js'
 import { seedRng, shuffle } from './rng.js'
 
@@ -168,6 +170,8 @@ function dispatch(
       return doCallUno(state, action.player, events)
     case 'callout':
       return doCallout(state, action.player, action.target, pack, cards, events)
+    case 'timeout':
+      return doTimeout(state, action.player, pack, cards, events)
     default: {
       const never: never = action
       throw new RuleError('internal', `unknown action ${JSON.stringify(never)}`)
@@ -599,6 +603,77 @@ function doChallenge(
   }
 
   settle(state, ctx, pack, cards, events, null)
+}
+
+// ---------------------------------------------------------------------------------------------
+// The clock ran out
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Forfeit the outstanding decision for a player who has stopped making it — the disconnected, the
+ * distracted, the one whose phone died mid-call. The Durable Object owns the clock and decides
+ * *when* this happens (D17); what it *does* is a rule, so it lives here.
+ *
+ * The shape of the forfeit is the same in every phase: **take the option that can never be better
+ * than what the player would have chosen**, so that dropping off the call is never an advantage.
+ *
+ * - `awaitingPlay` → draw, then decline to play it. A forfeited turn is the physical game's "you
+ *   snooze, you draw one and the turn passes"; it deliberately does not play a card for them, even
+ *   a legal one, because picking *which* card is the game.
+ * - `awaitingDrawnCardChoice` → pass. Same reasoning, one step further in.
+ * - `awaitingColorChoice` → the side's first colour, deterministically. Any choice here is a real
+ *   decision we cannot make well on their behalf; a fixed one at least replays identically and
+ *   cannot be gamed by an opponent, and the alternative (hanging the whole table on an absent
+ *   player) is strictly worse for everyone still present.
+ * - `awaitingChallenge` → take the cards. Never challenge: a challenge they didn't ask for can cost
+ *   them two extra cards if the accused turns out to be innocent.
+ *
+ * It emits `timedOut` first, so the clients can narrate *why* the cards moved, then the ordinary
+ * events of the forfeited action — which means the animation pipeline, the UNO window and the
+ * append-only log all see a completely normal turn.
+ */
+function doTimeout(
+  state: GameState,
+  playerId: PlayerId,
+  pack: RulePack,
+  cards: Record<CardId, Card>,
+  events: GameEvent[],
+): void {
+  const player = requirePlayer(state, playerId)
+  const owed = playerToAct(state)
+
+  if (owed === null) {
+    throw new RuleError('wrong_phase', `nothing is waiting on a player (phase "${state.phase.t}")`)
+  }
+  if (owed !== playerId) {
+    throw new RuleError('not_your_turn', `the game is not waiting on ${player.name}`)
+  }
+
+  // Captured, not read through `state.phase`: the handlers below *move* the phase, and narrowing it
+  // here would tell TypeScript the "did the draw leave them a choice?" check can't be true.
+  const phase: PhaseName = state.phase.t
+  events.push({ t: 'timedOut', player: player.id, phase })
+
+  switch (phase) {
+    case 'awaitingPlay': {
+      doDraw(state, playerId, pack, cards, events)
+      // A playable draw leaves the same player holding the same decision. They are not here to make
+      // it either, so the forfeit runs to the end of the turn rather than waiting out a second clock.
+      if (state.phase.t === 'awaitingDrawnCardChoice') doPass(state, playerId, pack, cards, events)
+      return
+    }
+    case 'awaitingDrawnCardChoice':
+      return doPass(state, playerId, pack, cards, events)
+    case 'awaitingColorChoice': {
+      const color = pack.colorsFor(state.side)[0]
+      if (color === undefined) throw new RuleError('internal', `pack offers no ${state.side} colours`)
+      return doChooseColor(state, playerId, color, pack, cards, events)
+    }
+    case 'awaitingChallenge':
+      return doChallenge(state, playerId, false, pack, cards, events)
+    default:
+      throw new RuleError('wrong_phase', `cannot time out during "${phase}"`)
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

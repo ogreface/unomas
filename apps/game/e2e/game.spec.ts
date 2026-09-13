@@ -155,3 +155,56 @@ test('the table view projects a live game without leaking a hand', async ({ brow
   await ctxB.close()
   await table.close()
 })
+
+test('everyone watches the same countdown, and a player who vanishes does not stall the table', async ({
+  browser,
+}) => {
+  const ctxA = await browser.newContext()
+  const ctxB = await browser.newContext()
+  const ctxT = await browser.newContext()
+  const a = await ctxA.newPage()
+  const b = await ctxB.newPage()
+  const t = await ctxT.newPage()
+
+  const code = await createRoom(a, 'Ann')
+  await joinRoom(b, 'Bo', code)
+  await expect(a.locator('.roster li')).toHaveCount(2)
+  await a.getByRole('button', { name: /Start game/ }).click()
+  await expect(a.locator('.board')).toBeVisible()
+  await expect(b.locator('.board')).toBeVisible()
+  await t.goto(`/r/${code}/table`)
+
+  // The countdown is not private to whoever is on the clock: both players and the projector show it.
+  await expect(a.locator('.turn-clock').first()).toBeVisible()
+  await expect(b.locator('.turn-clock').first()).toBeVisible()
+  await expect(t.locator('.turn-clock').first()).toBeVisible()
+
+  const seconds = async (page: Page): Promise<number> =>
+    Number(((await page.locator('.turn-clock__num').first().textContent()) ?? '').trim())
+
+  const startedAt = await seconds(a)
+  expect(startedAt).toBeGreaterThan(0)
+  expect(startedAt).toBeLessThanOrEqual(30)
+  await a.waitForTimeout(2_500)
+  expect(await seconds(a)).toBeLessThan(startedAt)
+
+  // Exactly one of the two boards hangs the clock on an *opponent* tile — the player whose turn it
+  // is not sees it on the person they are waiting for.
+  const onAnOpponent =
+    (await a.locator('.opponent .turn-clock').count()) +
+    (await b.locator('.opponent .turn-clock').count())
+  expect(onAnOpponent).toBe(1)
+
+  // Now nobody touches anything, as though whoever is up has walked away from the call. The server's
+  // clock — not either client — forfeits the turn, and the table carries on.
+  const turnBefore = (await a.locator('.turn-label').textContent()) ?? ''
+  await expect(a.locator('.toast--timedOut')).toBeVisible({ timeout: 45_000 })
+  await expect(a.locator('.turn-label')).not.toHaveText(turnBefore)
+  await expect(b.locator('.turn-label')).toBeVisible()
+  // …and the clock is running again, on the next decision.
+  expect(await seconds(a)).toBeGreaterThan(0)
+
+  await ctxA.close()
+  await ctxB.close()
+  await ctxT.close()
+})

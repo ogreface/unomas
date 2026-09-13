@@ -210,9 +210,15 @@ production-only bugs.
 
 ## Stage 2 — Feel
 
-Turn timers · sound · spectators · reconnection grace · house-rule toggles (stacking, 7-0,
-draw-to-match, jump-in) · AI fill-in for empty seats · animation polish · full a11y pass
-(every card is a `<button>`; the whole game is keyboard- and screen-reader-playable).
+~~Turn timers~~ **(shipped)** · sound · spectators · reconnection grace · house-rule toggles
+(stacking, 7-0, draw-to-match, jump-in) · AI fill-in for empty seats · animation polish · full a11y
+pass (every card is a `<button>`; the whole game is keyboard- and screen-reader-playable).
+
+**Turn timers.** 30 seconds per outstanding decision, on a `ctx.storage.setAlarm()` deadline held in
+SQLite (never a `setTimeout`, never a class field), counted down on every screen from a duration the
+server ships with each frame, and forfeited by a `timeout` action the engine reduces like any other.
+The ruling on what a forfeit costs is [decisions #17](decisions.md); the alarm's own footguns —
+at-least-once delivery, waking early, eviction mid-turn — are covered in `apps/game/test/timeout.test.ts`.
 
 ---
 

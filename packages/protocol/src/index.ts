@@ -22,6 +22,7 @@ import { LIGHT_COLORS, DARK_COLORS } from '@flipside/engine'
 import type {
   Color,
   EventView,
+  PhaseName,
   PlayerId,
   PlayerView,
   RuleErrorCode,
@@ -168,6 +169,30 @@ export interface LobbyPlayer {
   connected: boolean
 }
 
+/**
+ * The turn clock, as the authoritative server sees it — so every screen counts down the same
+ * decision, not its own guess at one.
+ *
+ * `remainingMs` is a **duration**, deliberately not a wall-clock deadline: half the phones in a
+ * room have a clock that is seconds off, and a shared deadline would render as a different number
+ * on each of them. A client anchors this against its own monotonic clock the moment the frame
+ * lands, so no clock-sync handshake is needed and skew cannot matter.
+ *
+ * It rides along on every snapshot and every batch of events, and it is `null` whenever nobody is
+ * on the clock — between rounds, in the lobby, once the game is over, or when the room's
+ * `turnTimeoutMs` option is 0.
+ */
+export interface TimerView {
+  /** Whose decision is being timed. */
+  player: PlayerId
+  /** The phase the clock is running against, so a client can label *what* is being timed. */
+  phase: PhaseName
+  /** The full length of this window. */
+  durationMs: number
+  /** How much of it was left when this frame was sent. */
+  remainingMs: number
+}
+
 /** Identity + room facts, sent once when a socket is accepted. */
 export interface WelcomeMessage {
   t: 'welcome'
@@ -184,6 +209,7 @@ export interface WelcomeMessage {
 export interface SyncMessage {
   t: 'sync'
   view: PlayerView
+  timer: TimerView | null
 }
 
 /** Animation script + resulting authoritative snapshot, for a player. One per accepted action. */
@@ -191,12 +217,14 @@ export interface EventsMessage {
   t: 'events'
   events: EventView[]
   view: PlayerView
+  timer: TimerView | null
 }
 
 /** The read-only projector snapshot, for a spectator (`/r/:code/table`). */
 export interface TableSyncMessage {
   t: 'tableSync'
   table: TableView
+  timer: TimerView | null
 }
 
 /** Animation script + resulting table snapshot, for a spectator. */
@@ -204,6 +232,7 @@ export interface TableEventsMessage {
   t: 'tableEvents'
   events: EventView[]
   table: TableView
+  timer: TimerView | null
 }
 
 /** The lobby roster changed (someone joined, left, or reconnected) before the game began. */
