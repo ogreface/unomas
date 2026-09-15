@@ -50,7 +50,10 @@ export function Piles({
           Discard · {discardCount}
           {activeColor && (
             <span className="active-color-tag" title="The colour you must match to play">
-              <span className="active-color" style={{ background: `var(--c-${activeColor})` }} />
+              <span
+                className="active-color"
+                style={{ background: `var(--ink-${activeColor})`, color: `var(--ink-${activeColor})` }}
+              />
               play {activeColor}
             </span>
           )}
