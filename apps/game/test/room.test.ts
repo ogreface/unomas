@@ -1,6 +1,6 @@
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
-import { CARDS_BY_ID, assertCardConservation } from '@flipside/engine'
+import { CARDS_BY_ID, assertCardConservation, decideBot, seedRng, viewFor } from '@flipside/engine'
 import { BOT_CLIENT_PREFIX } from '@flipside/protocol'
 import type { GameState } from '@flipside/engine'
 import { Client, autoMove, owes, stubFor, takeTurn } from './helpers.js'
@@ -405,7 +405,9 @@ describe('GameRoom — computer players', () => {
       }
     }
 
-    expect(a.latestView?.phase.t).toBe('roundOver')
+    // A round that ends with a hand worth 500 or more ends the game with it, so both are a round
+    // played to completion — which is the claim here.
+    expect(['roundOver', 'gameOver']).toContain(a.latestView?.phase.t)
     expect(botMoves).toBeGreaterThan(0)
     expect(a.errors).toEqual([])
     assertCardConservation(await readState(stub))
@@ -457,6 +459,7 @@ describe('GameRoom — computer players', () => {
         state.seq,
         JSON.stringify(state),
       )
+
     })
 
     a.send({ t: 'resync', lastSeq: 0 })
@@ -468,8 +471,32 @@ describe('GameRoom — computer players', () => {
     a.send({ t: 'play', key: sync.view.legalPlays[0]! })
     await a.waitFor('events')
 
-    // The bot is not on turn when the window opens. Catching a missed UNO is its own reason to wake
-    // the room, and an alarm being there to run is exactly the claim under test.
+    // Now the window is open, pin the bot's coin-flip. `normal` is 90% vigilant, and the 1-in-10
+    // decline is not a near miss: the bot goes on to take its turn, which closes the window for
+    // good. Asserting the 9 is a flaky test. So search for the first entropy that makes *this* bot,
+    // from *this* view, decide to call out, and store it as the bot's rng. Whether it rolls well is
+    // the engine's business and `bot.test.ts` covers it; what belongs here is that a callout it has
+    // decided on survives the trip through a cold alarm.
+    await runInDurableObject(stub, (_instance, ctx) => {
+      const row = ctx.storage.sql.exec('SELECT state FROM snapshot WHERE id = 0').toArray()[0] as {
+        state: string
+      }
+      const state = JSON.parse(row.state) as GameState
+      const botId = state.players.find(p => p.id !== you)!.id
+      const view = viewFor(state, botId)
+      let rng = seedRng('uno-callout')
+      let willCallOut = false
+      for (let i = 0; i < 500 && !willCallOut; i++) {
+        const decision = decideBot(view, rng, 'normal')
+        if (decision.intent?.t === 'callout') willCallOut = true
+        else rng = decision.rng
+      }
+      expect(willCallOut).toBe(true)
+      ctx.storage.sql.exec('UPDATE bots SET rng = ? WHERE player_id = ?', JSON.stringify(rng), botId)
+    })
+
+    // With the flip pinned, the alarm existing at all is the claim: catching a missed UNO is its
+    // own reason to wake the room, separate from whose turn it is.
     expect(await runDurableObjectAlarm(stub)).toBe(true)
     const caught = await a.waitFor('events')
     expect(caught.events.some(e => e.t === 'unoPenalty' && e.player === you)).toBe(true)
