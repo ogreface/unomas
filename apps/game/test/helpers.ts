@@ -18,6 +18,9 @@ export function stubFor(code: string): RoomStub {
 export class Client {
   readonly ws: WebSocket
   latestView: PlayerView | null = null
+  /** Every rejection this socket has ever been sent. A driver loop asserting this is empty is a
+   *  cheap way to prove nothing illegal was attempted along the way. */
+  readonly errors: Array<Extract<ServerMessage, { t: 'error' }>> = []
   private readonly queue: ServerMessage[] = []
   private readonly waiters: Array<(m: ServerMessage) => void> = []
 
@@ -26,6 +29,7 @@ export class Client {
     ws.addEventListener('message', event => {
       const msg = JSON.parse(event.data as string) as ServerMessage
       if (msg.t === 'events' || msg.t === 'sync') this.latestView = msg.view
+      if (msg.t === 'error') this.errors.push(msg)
       const waiter = this.waiters.shift()
       if (waiter) waiter(msg)
       else this.queue.push(msg)
@@ -94,26 +98,33 @@ const colorForSide = (side: PlayerView['side']): Color => (side === 'light' ? 'r
 export async function autoMove(clients: Client[]): Promise<boolean> {
   const actor = clients.find(c => c.latestView && owes(c.latestView) === c.latestView.you)
   if (!actor || !actor.latestView) return false
-  const view = actor.latestView
-
-  const phase = view.phase
-  if (phase.t === 'awaitingColorChoice') {
-    actor.send({ t: 'chooseColor', color: colorForSide(view.side) })
-  } else if (phase.t === 'awaitingChallenge') {
-    actor.send({ t: 'acceptDraw' })
-  } else if (phase.t === 'awaitingDrawnCardChoice') {
-    if (view.legalPlays.includes(phase.card)) sendPlay(actor, view, phase.card)
-    else actor.send({ t: 'pass' })
-  } else {
-    // awaitingPlay
-    const key = view.legalPlays[0]
-    if (key) sendPlay(actor, view, key)
-    else actor.send({ t: 'draw' })
-  }
+  takeTurn(actor, actor.latestView)
 
   // Every accepted action broadcasts one `events` to every client; wait for all of them.
   await Promise.all(clients.map(c => c.waitFor('events')))
   return true
+}
+
+/**
+ * Send one legal action for whatever `view` is waiting on this client, without waiting for the
+ * result. Split out of `autoMove` because a table with computer players in it cannot use that
+ * function's "one broadcast per client per move" barrier — the bots broadcast too.
+ */
+export function takeTurn(client: Client, view: PlayerView): void {
+  const phase = view.phase
+  if (phase.t === 'awaitingColorChoice') {
+    client.send({ t: 'chooseColor', color: colorForSide(view.side) })
+  } else if (phase.t === 'awaitingChallenge') {
+    client.send({ t: 'acceptDraw' })
+  } else if (phase.t === 'awaitingDrawnCardChoice') {
+    if (view.legalPlays.includes(phase.card)) sendPlay(client, view, phase.card)
+    else client.send({ t: 'pass' })
+  } else {
+    // awaitingPlay
+    const key = view.legalPlays[0]
+    if (key) sendPlay(client, view, key)
+    else client.send({ t: 'draw' })
+  }
 }
 
 function sendPlay(client: Client, view: PlayerView, key: string): void {
