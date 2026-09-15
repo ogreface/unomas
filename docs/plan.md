@@ -50,6 +50,7 @@ Five constraints make this work. Each is cheap now and brutally expensive to ret
 │  │  │  ├─ effects.ts         # Effect union + trusted applier
 │  │  │  ├─ view.ts            # redaction: GameState → PlayerView
 │  │  │  ├─ score.ts
+│  │  │  ├─ bot.ts             # decideBot: PlayerView → intent. Takes the *view*, so it can't cheat
 │  │  │  ├─ rulepack.ts        # RulePack + RuleHost interfaces
 │  │  │  └─ packs/unoflip/     # ← the official rules, as a rule pack
 │  │  └─ test/
@@ -211,8 +212,43 @@ production-only bugs.
 ## Stage 2 — Feel
 
 Turn timers · sound · spectators · reconnection grace · house-rule toggles (stacking, 7-0,
-draw-to-match, jump-in) · AI fill-in for empty seats · animation polish · full a11y pass
+draw-to-match, jump-in) · ✅ **computer players** · animation polish · full a11y pass
 (every card is a `<button>`; the whole game is keyboard- and screen-reader-playable).
+
+### 2.1 Computer players — done
+
+The design constraint, and the only one that mattered:
+
+> **The bot's input type is `PlayerView`, not `GameState`.**
+
+`decideBot(view, rng, difficulty) → { intent, rng }` lives in `packages/engine/src/bot.ts` and is
+pure like everything else in that package — the RNG is threaded, not ambient. Because its only
+input is the redacted view, a bot is *structurally* incapable of seeing a hidden card, and no future
+tinkering with its heuristics can change that. It also makes an in-browser offline mode a wiring
+job, not a rewrite: the client already holds a `PlayerView`.
+
+The engine stays ignorant of bots — to the reducer a bot is a `Player`. Everything bot-specific
+lives in the `GameRoom`:
+
+| Concern | Where |
+|---|---|
+| Which seats are computers, and how hard | `bots` table (separate from `players`, so an already-deployed room needs no migration) |
+| A bot's private entropy | `bots.rng`, advanced and stored on **every** decision — including a refused coin-flip, or a bot re-rolls the same choice forever |
+| Its "body" | `ctx.storage.setAlarm` — one move per alarm, each broadcast schedules the next. Never `setTimeout`: that defeats hibernation and does not survive eviction, which is exactly the window a bot's move sits in |
+| Turning an intent into an action | The same `#toAction` a human's message goes through |
+
+Three details that are load-bearing rather than decorative:
+
+- **The alarm handler is idempotent.** It re-derives everything from the stored snapshot, so an
+  at-least-once duplicate simply finds nothing to do. A test evicts the object mid-game and the bot
+  still takes its turn.
+- **Scheduling over-approximates.** `#botWakeIn` is a cheap RNG-free "could a bot want to move?".
+  A false positive costs one wake that finds nothing; a false negative stalls the room forever. It
+  is not only about whose turn it is — an open UNO callout window is a decision for every bot at the
+  table.
+- **A bot's `client_id` namespace (`bot:`) is reserved on the wire.** Player ids are public on the
+  roster, so without that refusal a client could send a bot's id and be handed its seat, and its
+  hand. Refused by the zod schema and again inside the DO.
 
 ---
 

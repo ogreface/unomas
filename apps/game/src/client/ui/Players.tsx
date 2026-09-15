@@ -13,6 +13,7 @@ export function Players({
   side,
   turn,
   unoWindow,
+  bots,
   onCallout,
 }: {
   players: PlayerSummaryView[]
@@ -20,6 +21,8 @@ export function Players({
   side: Side
   turn: string | null
   unoWindow: string | null
+  /** Seats played by the computer. Labelled, because "why is Byte so slow" deserves an answer. */
+  bots: Set<string>
   onCallout: (targetId: string) => void
 }) {
   const opponents = players.filter(p => p.id !== you)
@@ -32,6 +35,11 @@ export function Players({
           <div className="opponent__head">
             <span className="seat-dot" data-seat={p.seat} />
             <span className="opponent__name">{p.name}</span>
+            {bots.has(p.id) && (
+              <span className="tag tag--bot" title="A computer player">
+                bot
+              </span>
+            )}
             <span className="opponent__count">{p.handCount}</span>
             {p.saidUno && <span className="tag tag--uno">UNO</span>}
             {unoWindow === p.id && (

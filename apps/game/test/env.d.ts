@@ -9,6 +9,7 @@ declare global {
       GAME_ROOM: DurableObjectNamespace<GameRoom>
       ASSETS?: Fetcher
       ROOM_SECRET?: string
+      BOT_DELAY_MS?: string
     }
   }
 }

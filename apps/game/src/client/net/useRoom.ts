@@ -29,6 +29,12 @@ export interface RoomState {
   fatal: { code: string; message: string } | null
   /** Rolling window of recent events for callouts/animations. */
   feed: FeedEvent[]
+  /**
+   * Which seats are computer players. The engine's `PlayerView` deliberately does not carry this —
+   * to the reducer a bot is a player — so it arrives on `welcome` and is refreshed by the lobby
+   * roster as bots are seated.
+   */
+  bots: Set<string>
   send: (msg: ClientMessageInput) => void
 }
 
@@ -55,6 +61,7 @@ export function useRoom(opts: {
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [fatal, setFatal] = useState<{ code: string; message: string } | null>(null)
   const [feed, setFeed] = useState<FeedEvent[]>([])
+  const [bots, setBots] = useState<Set<string>>(() => new Set())
 
   const connRef = useRef<Connection | null>(null)
   const lastSeqRef = useRef(0)
@@ -76,10 +83,12 @@ export function useRoom(opts: {
           setYou(msg.you)
           setSeat(msg.seat)
           setHost(msg.host)
+          setBots(new Set(msg.bots))
           break
         case 'roster':
           setRoster({ players: msg.players, host: msg.host })
           setHost(msg.host)
+          setBots(new Set(msg.players.filter(p => p.bot !== null).map(p => p.id)))
           break
         case 'sync':
           setView(msg.view)
@@ -144,5 +153,5 @@ export function useRoom(opts: {
     connRef.current?.send(msg)
   }, [])
 
-  return { status, you, seat, host, code: opts.code, view, table, roster, error, fatal, feed, send }
+  return { status, you, seat, host, code: opts.code, view, table, roster, error, fatal, feed, bots, send }
 }
