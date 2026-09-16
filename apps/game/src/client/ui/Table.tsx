@@ -2,6 +2,7 @@ import { otherSide } from '@flipside/engine'
 import { useRoom } from '../net/useRoom.js'
 import { Card } from './Card.js'
 import { Feed } from './Feed.js'
+import { SideBadge } from './SideBadge.js'
 
 /**
  * The table view — read-only, built for a shared screen on the call. Deliberately *not* a player's
@@ -29,14 +30,17 @@ export function Table({ code }: { code: string }) {
   const inactive = otherSide(table.side)
 
   return (
-    <main className="table-screen">
+    <main className="table-screen" data-side={table.side}>
       <header className="table-head">
         <span className="room-code">{code}</span>
-        <span className={`side-badge side-badge--${table.side}`}>{table.side} side</span>
+        <SideBadge side={table.side} />
         <span className="dir">{table.direction === 1 ? '↻' : '↺'}</span>
         {table.activeColor && (
           <span className="active-color-tag" title="The colour in play right now">
-            <span className="active-color" style={{ background: `var(--c-${table.activeColor})` }} />
+            <span
+              className="active-color"
+              style={{ background: `var(--ink-${table.activeColor})`, color: `var(--ink-${table.activeColor})` }}
+            />
             {table.activeColor}
           </span>
         )}

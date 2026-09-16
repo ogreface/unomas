@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useId } from 'react'
 import type { Color, Face, Kind, Side } from '@flipside/engine'
 
 /**
@@ -79,16 +79,28 @@ export const Card = memo(function Card({
   onClick,
   ariaLabel,
 }: CardProps) {
+  // The wild's wheel is clipped to the oval, and a clip path is referenced by id — so the id has to
+  // be unique per *instance*, not per face. Keying it off the face alone collided as soon as two
+  // wilds of the same kind were on screen together, which a hand of eight cards does routinely.
+  const clipId = useId()
   const height = Math.round(width * 1.5)
   const isWild = face.color === null
   const glyph = glyphFor(face.kind, face.value)
   const kicker = kickerFor(face.kind)
   const fill = isWild ? 'var(--card-wild-bg)' : `var(--c-${face.color})`
   const wheel = side === 'light' ? WHEEL_LIGHT : WHEEL_DARK
-  // Dark-side faces get a near-black border; a white one washes out against the darker palette.
-  const edge = side === 'dark' ? 'var(--card-edge-dark)' : 'var(--card-edge)'
-  // The ink colour for the central mark — the card's own colour, or white on a wild's wheel.
-  const ink = isWild ? 'var(--card-ink-onwild)' : `var(--c-${face.color})`
+  // The ink colour for the central mark: on the light side that is the body colour itself, sitting
+  // on a white oval; on the dark side it is the neon lift of the same hue, sitting on a black one.
+  // Both come out of `--ink-<colour>`, which the stylesheet defines per side.
+  const ink = isWild ? 'var(--card-ink-onwild)' : `var(--ink-${face.color})`
+  // Corner pips ride on the body, not the oval, so they take the ink on the dark side (neon on a
+  // deep body) and plain white on the light one (white on a bright body, as a real deck does).
+  const pip = side === 'dark' ? ink : 'var(--card-pip)'
+  // The dark side's oval is pulled in a little. A white oval can fill the card and still read as
+  // "a red card"; a black one at the same size leaves the body colour as a hairline, so it gives
+  // some room back to the hue you actually have to match.
+  const ovalRx = side === 'dark' ? 30 : 34
+  const ovalRy = side === 'dark' ? 47 : 52
   // Skip / skip-everyone / flip are drawn as vector marks, not glyphs, so they read distinctly:
   // a single ban for skip, a wider double ring for skip-everyone, a turning card for flip.
   const markCy = kicker ? 70 : 76
@@ -101,23 +113,35 @@ export const Card = memo(function Card({
 
   const content = (
     <svg viewBox="0 0 100 150" width={width} height={height} role="img" aria-label={ariaLabel ?? label(face)}>
-      <rect x="2" y="2" width="96" height="146" rx="12" fill={fill} stroke={edge} strokeWidth="3" />
+      {/* The frame is a real frame, not a stroke: a white border on the light side, black on the
+          dark one, with a hairline rim so a black-framed card never melts into a black felt. */}
+      <rect
+        x="1"
+        y="1"
+        width="98"
+        height="148"
+        rx="13"
+        fill="var(--card-frame)"
+        stroke="var(--card-rim)"
+        strokeWidth="1.5"
+      />
+      <rect x="6" y="6" width="88" height="138" rx="9" fill={fill} />
       {isWild ? (
         <g>
           {/* The four-colour wheel behind the central oval. */}
-          <clipPath id={`clip-${face.kind}`}>
-            <ellipse cx="50" cy="75" rx="34" ry="52" />
+          <clipPath id={`clip-${clipId}`}>
+            <ellipse cx="50" cy="75" rx={ovalRx} ry={ovalRy} />
           </clipPath>
-          <g clipPath={`url(#clip-${face.kind})`}>
-            <rect x="16" y="23" width="34" height="52" fill={`var(--c-${wheel[0]})`} />
-            <rect x="50" y="23" width="34" height="52" fill={`var(--c-${wheel[1]})`} />
-            <rect x="16" y="75" width="34" height="52" fill={`var(--c-${wheel[2]})`} />
-            <rect x="50" y="75" width="34" height="52" fill={`var(--c-${wheel[3]})`} />
+          <g clipPath={`url(#clip-${clipId})`}>
+            <rect x="16" y="23" width="34" height="52" fill={`var(--ink-${wheel[0]})`} />
+            <rect x="50" y="23" width="34" height="52" fill={`var(--ink-${wheel[1]})`} />
+            <rect x="16" y="75" width="34" height="52" fill={`var(--ink-${wheel[2]})`} />
+            <rect x="50" y="75" width="34" height="52" fill={`var(--ink-${wheel[3]})`} />
           </g>
-          <ellipse cx="50" cy="75" rx="34" ry="52" fill="none" stroke="var(--card-oval)" strokeWidth="4" />
+          <ellipse cx="50" cy="75" rx={ovalRx} ry={ovalRy} fill="none" stroke="var(--card-oval)" strokeWidth="4" />
         </g>
       ) : (
-        <ellipse cx="50" cy="75" rx="34" ry="52" fill="var(--card-oval)" transform="rotate(-20 50 75)" />
+        <ellipse cx="50" cy="75" rx={ovalRx} ry={ovalRy} fill="var(--card-oval)" transform="rotate(-20 50 75)" />
       )}
 
       {face.kind === 'skip' || face.kind === 'skipEveryone' ? (
@@ -135,19 +159,35 @@ export const Card = memo(function Card({
         </text>
       )}
 
-      {/* Corner pips, top-left and (rotated) bottom-right — the at-a-glance read in a fanned hand. */}
-      <text x="12" y="24" textAnchor="middle" className="card__pip" fill="var(--card-oval)">
-        {cornerFor(face)}
-      </text>
-      <text x="88" y="138" textAnchor="middle" className="card__pip" fill="var(--card-oval)" transform="rotate(180 88 133)">
-        {cornerFor(face)}
-      </text>
+      {/* Corner pips, top-left and (rotated) bottom-right — the at-a-glance read in a fanned hand.
+          Each is haloed so it survives on yellow, the one body a light pip would otherwise vanish on. */}
+      <g className="card__pip" fill={pip} stroke="var(--card-pip-halo)" strokeWidth="2.5" paintOrder="stroke">
+        <text x="13" y="26" textAnchor="middle">
+          {cornerFor(face)}
+        </text>
+        <text x="87" y="136" textAnchor="middle" transform="rotate(180 87 131)">
+          {cornerFor(face)}
+        </text>
+      </g>
     </svg>
   )
 
-  if (!onClick) return <span className={classes.join(' ')}>{content}</span>
+  // `data-side` on the card itself, not just the board: the draw pile and opponents' hands show the
+  // *inactive* side, and each of those cards must theme to the face it is actually showing.
+  if (!onClick)
+    return (
+      <span className={classes.join(' ')} data-side={side}>
+        {content}
+      </span>
+    )
   return (
-    <button type="button" className={classes.join(' ')} onClick={onClick} aria-label={ariaLabel ?? label(face)}>
+    <button
+      type="button"
+      className={classes.join(' ')}
+      data-side={side}
+      onClick={onClick}
+      aria-label={ariaLabel ?? label(face)}
+    >
       {content}
     </button>
   )
