@@ -42,7 +42,13 @@ export function Board({ room }: { room: RoomState }) {
     // `data-side` themes the felt, the accent and every card beneath it, so a flip repaints the
     // whole board rather than just swapping which four colours are legal.
     <main className="board" data-side={view.side}>
-      <TopBar view={view} nameOf={nameOf} myTurn={myTurn} onLeave={() => navigate('/')} />
+      <TopBar
+        view={view}
+        nameOf={nameOf}
+        myTurn={myTurn}
+        thinking={view.turn !== null && room.bots.has(view.turn)}
+        onLeave={() => navigate('/')}
+      />
 
       <Players
         players={view.players}
@@ -50,6 +56,7 @@ export function Board({ room }: { room: RoomState }) {
         side={view.side}
         turn={view.turn}
         unoWindow={view.unoWindow}
+        bots={room.bots}
         onCallout={id => room.send({ t: 'callout', target: id })}
       />
 
@@ -147,15 +154,24 @@ function TopBar({
   view,
   nameOf,
   myTurn,
+  thinking,
   onLeave,
 }: {
   view: PlayerView
   nameOf: (id: string) => string
   myTurn: boolean
+  /** The seat on turn is a computer player, so say so rather than looking like a stall. */
+  thinking: boolean
   onLeave: () => void
 }) {
   const turnLabel =
-    view.turn === null ? '—' : myTurn ? 'Your turn' : `${nameOf(view.turn)}’s turn`
+    view.turn === null
+      ? '—'
+      : myTurn
+        ? 'Your turn'
+        : thinking
+          ? `${nameOf(view.turn)} is thinking…`
+          : `${nameOf(view.turn)}’s turn`
   return (
     <header className="topbar">
       <button className="btn btn--ghost btn--tiny" onClick={onLeave}>
