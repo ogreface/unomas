@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { CardView, Color, PlayerView } from '@flipside/engine'
+import { SideBadge } from './SideBadge.js'
 import type { RoomState } from '../net/useRoom.js'
 import { navigate } from '../App.js'
 import { Piles } from './Piles.js'
@@ -42,7 +43,9 @@ export function Board({ room }: { room: RoomState }) {
   }
 
   return (
-    <main className="board">
+    // `data-side` themes the felt, the accent and every card beneath it, so a flip repaints the
+    // whole board rather than just swapping which four colours are legal.
+    <main className="board" data-side={view.side}>
       <TopBar
         view={view}
         nameOf={nameOf}
@@ -187,13 +190,16 @@ function TopBar({
       <button className="btn btn--ghost btn--tiny" onClick={onLeave}>
         ‹
       </button>
-      <span className={`side-badge side-badge--${view.side}`}>{view.side}</span>
+      <SideBadge side={view.side} />
       <span className="turn-label">{turnLabel}</span>
       {clock && <TurnClock clock={clock} label={clockLabel} size={34} />}
       <span className="dir">{view.direction === 1 ? '↻' : '↺'}</span>
       {view.activeColor && (
         <span className="active-color-tag" title="The colour in play right now">
-          <span className="active-color" style={{ background: `var(--c-${view.activeColor})` }} />
+          <span
+            className="active-color"
+            style={{ background: `var(--ink-${view.activeColor})`, color: `var(--ink-${view.activeColor})` }}
+          />
           {view.activeColor}
         </span>
       )}
