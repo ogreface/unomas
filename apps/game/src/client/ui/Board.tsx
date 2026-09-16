@@ -43,7 +43,14 @@ export function Board({ room }: { room: RoomState }) {
 
   return (
     <main className="board">
-      <TopBar view={view} nameOf={nameOf} myTurn={myTurn} clock={clock} onLeave={() => navigate('/')} />
+      <TopBar
+        view={view}
+        nameOf={nameOf}
+        myTurn={myTurn}
+        clock={clock}
+        thinking={view.turn !== null && room.bots.has(view.turn)}
+        onLeave={() => navigate('/')}
+      />
 
       <Players
         players={view.players}
@@ -52,6 +59,7 @@ export function Board({ room }: { room: RoomState }) {
         turn={view.turn}
         unoWindow={view.unoWindow}
         clock={clock}
+        bots={room.bots}
         onCallout={id => room.send({ t: 'callout', target: id })}
       />
 
@@ -150,18 +158,28 @@ function TopBar({
   nameOf,
   myTurn,
   clock,
+  thinking,
   onLeave,
 }: {
   view: PlayerView
   nameOf: (id: string) => string
   myTurn: boolean
   clock: ClockReading | null
+  /** The seat on turn is a computer player, so say so rather than looking like a stall. */
+  thinking: boolean
   onLeave: () => void
 }) {
   const turnLabel =
-    view.turn === null ? '—' : myTurn ? 'Your turn' : `${nameOf(view.turn)}’s turn`
+    view.turn === null
+      ? '—'
+      : myTurn
+        ? 'Your turn'
+        : thinking
+          ? `${nameOf(view.turn)} is thinking…`
+          : `${nameOf(view.turn)}’s turn`
   // The clock belongs to whoever owes the decision, which is not always the player at the turn: a
-  // colour choice or a challenge is owed by somebody else while the turn sits still.
+  // colour choice or a challenge is owed by somebody else while the turn sits still. A bot is never
+  // on it — the room plays for it rather than waiting — so a thinking seat wears no ring.
   const onTheClock = clock ? clock.timer.player : null
   const clockLabel = onTheClock === view.you ? 'You' : onTheClock ? nameOf(onTheClock) : ''
   return (

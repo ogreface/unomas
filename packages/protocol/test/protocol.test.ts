@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BOT_CLIENT_PREFIX,
   ClientMessageSchema,
   ROOM_CODE_ALPHABET,
   ROOM_CODE_RE,
@@ -80,6 +81,7 @@ describe('client message parsing', () => {
     expect(verbs).toEqual(
       [
         'acceptDraw',
+        'addBot',
         'callUno',
         'callout',
         'challenge',
@@ -88,10 +90,39 @@ describe('client message parsing', () => {
         'join',
         'pass',
         'play',
+        'removeBot',
         'resync',
         'start',
       ].sort(),
     )
+  })
+})
+
+describe('computer players', () => {
+  it('defaults addBot to the normal difficulty', () => {
+    const r = parseClientMessage({ t: 'addBot' })
+    expect(r.ok).toBe(true)
+    if (r.ok && r.msg.t === 'addBot') expect(r.msg.difficulty).toBe('normal')
+  })
+
+  it('rejects a difficulty that is not one the engine implements', () => {
+    expect(parseClientMessage({ t: 'addBot', difficulty: 'impossible' }).ok).toBe(false)
+  })
+
+  it('requires a player id to remove a bot', () => {
+    expect(parseClientMessage({ t: 'removeBot' }).ok).toBe(false)
+    expect(parseClientMessage({ t: 'removeBot', playerId: 'p_1' }).ok).toBe(true)
+  })
+
+  it('refuses a join that claims the reserved bot client-id namespace', () => {
+    // Player ids are public on the roster, and a bot's client_id is derived from one — so without
+    // this a client could hand itself a computer player's seat, and its hand.
+    const r = parseClientMessage({
+      t: 'join',
+      clientId: `${BOT_CLIENT_PREFIX}p_abcdef123456`,
+      nickname: 'Sneak',
+    })
+    expect(r.ok).toBe(false)
   })
 })
 

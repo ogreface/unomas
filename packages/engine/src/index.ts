@@ -34,6 +34,9 @@ export { playerToAct } from './clock.js'
 
 export { handValue, roundPoints } from './score.js'
 
+export { BOT_DIFFICULTIES, decideBot } from './bot.js'
+export type { BotDecision, BotDifficulty, BotIntent } from './bot.js'
+
 export { LocalRuleHost } from './host.js'
 
 export {

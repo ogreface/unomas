@@ -208,3 +208,41 @@ test('everyone watches the same countdown, and a player who vanishes does not st
   await ctxB.close()
   await ctxT.close()
 })
+
+test('one human plays a real round against a computer player', async ({ page }) => {
+  // Nothing drives the computer here: every one of its moves is the room waking itself on a real
+  // alarm, after the real 900ms pacing delay. That is the point of this test and also why it is
+  // slow — a long round is a couple of minutes of genuine wall clock, so budget generously.
+  test.setTimeout(300_000)
+
+  // The solo path: no second browser, no second person. The host seats a bot, which is what makes
+  // MIN_PLAYERS reachable alone, and every opponent move below is the Durable Object waking itself
+  // on an alarm and playing from the bot's own redacted view.
+  await createRoom(page, 'Ann')
+
+  await page.getByRole('button', { name: 'Add computer player' }).click()
+  await expect(page.locator('.roster li')).toHaveCount(2)
+  await expect(page.locator('.tag--bot')).toBeVisible()
+
+  await page.getByRole('button', { name: /Start game/ }).click()
+  await expect(page.locator('.board')).toBeVisible()
+  // The board labels the computer, so a pause on its turn reads as thinking rather than as a stall.
+  await expect(page.locator('.opponent .tag--bot')).toBeVisible()
+
+  let sawEnd = false
+  let idleStreak = 0
+  for (let i = 0; i < 500 && !sawEnd; i++) {
+    const acted = await act(page)
+    idleStreak = acted ? 0 : idleStreak + 1
+    sawEnd = await page
+      .locator('.endgame')
+      .isVisible()
+      .catch(() => false)
+    // Idle means it is the bot's turn: give the room's alarm time to fire and broadcast.
+    if (!sawEnd) await page.waitForTimeout(acted ? 60 : 150)
+    if (idleStreak > 60) break
+  }
+
+  await expect(page.locator('.endgame')).toBeVisible()
+  await expect(page.locator('.endgame .scores')).toBeVisible()
+})

@@ -10,8 +10,9 @@
 
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
+import { assertCardConservation, decideBot, seedRng, viewFor } from '@flipside/engine'
 import type { GameState } from '@flipside/engine'
-import { Client, autoMove, owes, stubFor } from './helpers.js'
+import { Client, autoMove, owes, stubFor, takeTurn } from './helpers.js'
 import type { RoomStub } from './helpers.js'
 
 async function seatTwoAndStart(code: string): Promise<{ stub: RoomStub; a: Client; b: Client }> {
@@ -77,6 +78,99 @@ async function deliverAlarm(stub: RoomStub): Promise<void> {
 async function expireClock(stub: RoomStub): Promise<void> {
   await runInDurableObject(stub, (_instance, ctx) => {
     ctx.storage.sql.exec('UPDATE turn_clock SET deadline = ? WHERE id = 0', Date.now() - 1)
+  })
+}
+
+/** One human host plus one computer player, mid-game. `BOT_DELAY_MS` is ten minutes under test. */
+async function seatHumanAndBot(code: string): Promise<{ stub: RoomStub; a: Client; botId: string }> {
+  const stub = stubFor(code)
+  await stub.createRoom(code)
+
+  const a = await Client.connect(stub, code)
+  a.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
+  await a.waitFor('welcome')
+  await a.waitFor('roster')
+
+  a.send({ t: 'addBot', difficulty: 'normal' })
+  const roster = await a.waitFor('roster')
+  const botId = roster.players.find(p => p.bot !== null)?.id
+  if (!botId) throw new Error('no bot was seated')
+
+  a.send({ t: 'start' })
+  await a.waitFor('events')
+  return { stub, a, botId }
+}
+
+const scheduledAlarm = (stub: RoomStub): Promise<number | null> =>
+  runInDurableObject(stub, (_instance, ctx) => ctx.storage.getAlarm())
+
+/** Two humans and a bot, mid-game. Returns the host's client, the other human's, and the bot's id. */
+async function seatTwoHumansAndBot(
+  code: string,
+): Promise<{ stub: RoomStub; a: Client; b: Client; annId: string; botId: string }> {
+  const stub = stubFor(code)
+  await stub.createRoom(code)
+
+  const a = await Client.connect(stub, code)
+  a.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
+  await a.waitFor('welcome')
+  await a.waitFor('roster')
+
+  const b = await Client.connect(stub, code)
+  b.send({ t: 'join', clientId: 'client-b', nickname: 'Bo' })
+  await b.waitFor('welcome')
+  await b.waitFor('roster')
+  await a.waitFor('roster')
+
+  a.send({ t: 'addBot', difficulty: 'normal' })
+  const roster = await a.waitFor('roster')
+  await b.waitFor('roster')
+  const botId = roster.players.find(p => p.bot !== null)?.id
+  if (!botId) throw new Error('no bot was seated')
+
+  a.send({ t: 'start' })
+  const started = await a.waitFor('events')
+  await b.waitFor('events')
+  return { stub, a, b, annId: started.view.you, botId }
+}
+
+/**
+ * Rig that table into the one shape where both of the alarm's errands are pending at once: Ann is
+ * down to her last card and never said UNO — a callout the bot may want — while Bo owes the
+ * decision and so is the one on the clock. Rigged rather than played out, because what is under
+ * test is the single alarm slot, not how a table gets here. Returns Bo's player id.
+ */
+async function rigMissedUno(
+  stub: RoomStub,
+  annId: string,
+  botId: string,
+  turnTimeoutMs?: number,
+): Promise<string> {
+  return runInDurableObject(stub, (_instance, ctx) => {
+    const row = ctx.storage.sql.exec('SELECT state FROM snapshot WHERE id = 0').toArray()[0] as {
+      state: string
+    }
+    const state = JSON.parse(row.state) as GameState
+    const ann = state.players.find(p => p.id === annId)!
+    const bo = state.players.find(p => p.id !== annId && p.id !== botId)!
+
+    // The cards Ann is no longer holding go to the bottom of the draw pile, so the round still has
+    // every card it was dealt.
+    state.drawPile = [...state.drawPile, ...ann.hand.slice(1)]
+    ann.hand = ann.hand.slice(0, 1)
+    ann.saidUno = false
+    state.unoWindow = ann.id
+    state.turn = state.players.indexOf(bo)
+    state.phase = { t: 'awaitingPlay' }
+    if (turnTimeoutMs !== undefined) state.options = { ...state.options, turnTimeoutMs }
+
+    assertCardConservation(state)
+    ctx.storage.sql.exec(
+      'INSERT OR REPLACE INTO snapshot (id, seq, state) VALUES (0, ?, ?)',
+      state.seq,
+      JSON.stringify(state),
+    )
+    return bo.id
   })
 }
 
@@ -255,5 +349,115 @@ describe('GameRoom — the turn clock', () => {
     await idle!.next()
 
     expect((await readClock(stub))?.deadline).toBe(clock?.deadline)
+  })
+})
+
+/**
+ * A Durable Object gets exactly one alarm, and this room has two things to do with it: play a
+ * bot's move, and forfeit a decision whose time is up. These are the tests for them sharing it.
+ */
+describe('GameRoom — the clock and the bot driver share one alarm', () => {
+  it('leaves a bot off the clock, and wakes to play for it instead', async () => {
+    const { stub, a, botId } = await seatHumanAndBot('CLKB1')
+
+    // Hand the table to the bot. A wild leaves the human owing a colour choice next, so this is a
+    // short loop rather than a single move.
+    for (let i = 0; i < 8 && owes(a.latestView!) === a.latestView!.you; i++) {
+      takeTurn(a, a.latestView!)
+      await a.waitFor('events')
+    }
+    expect(owes(a.latestView!)).toBe(botId)
+
+    // Nobody is on the clock: a bot's seat is *driven*, so forfeiting it would punish a player who
+    // has not gone anywhere — the room is about to move for it.
+    expect(await readClock(stub)).toBeNull()
+    // But the room has not gone quiet on a seat that owes a move: the bot's own wake is armed.
+    expect(await scheduledAlarm(stub)).not.toBeNull()
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true)
+    const events = await a.waitFor('events')
+    // The wake played the bot's turn; it did not forfeit it.
+    expect(events.events.some(e => e.t === 'timedOut')).toBe(false)
+  })
+
+  it('still runs a human’s clock at a table with a bot, and forfeits on time', async () => {
+    const { stub, a } = await seatHumanAndBot('CLKB2')
+
+    // The deal can hand the first turn to either seat; get the human on the clock.
+    for (let i = 0; i < 8 && owes(a.latestView!) !== a.latestView!.you; i++) {
+      expect(await runDurableObjectAlarm(stub)).toBe(true)
+      await a.waitFor('events')
+    }
+    const me = a.latestView!.you
+    const clock = await readClock(stub)
+    expect(clock?.player).toBe(me)
+
+    // The sooner errand wins the slot: the human's 30 seconds, not the bot's pacing delay, which
+    // the test environment pushes ten minutes out.
+    expect(await scheduledAlarm(stub)).toBe(clock?.deadline)
+
+    await expireClock(stub)
+    expect(await runDurableObjectAlarm(stub)).toBe(true)
+    const events = await a.waitFor('events')
+    expect(events.events.find(e => e.t === 'timedOut')).toMatchObject({ player: me })
+
+    // …and the room still has an alarm, so the table carries on rather than stalling on the seat
+    // the forfeit handed the turn to.
+    expect(await scheduledAlarm(stub)).not.toBeNull()
+  })
+  it('arms the sooner of its two errands when both are waiting', async () => {
+    // Under test the bot's pacing delay is ten minutes (thirty, with the callout grace), so a
+    // human's thirty seconds is the sooner errand by a mile.
+    const { stub, b, annId, botId } = await seatTwoHumansAndBot('CLKB3')
+    const boId = await rigMissedUno(stub, annId, botId)
+
+    // A resync re-arms from stored state, which is where the two errands get weighed against
+    // each other.
+    b.send({ t: 'resync', lastSeq: 0 })
+    await b.waitFor('sync')
+
+    const clock = await readClock(stub)
+    expect(clock?.player).toBe(boId)
+    expect(await scheduledAlarm(stub)).toBe(clock?.deadline)
+    // Belt and braces on what that number *is*: the human's window, not the bot's half-hour.
+    expect(clock!.deadline).toBeLessThan(Date.now() + 60_000)
+  })
+
+  it('does not re-arm for a bot that has just declined to act', async () => {
+    // A wake the bot does nothing with must leave the room asleep, not book another one. Otherwise
+    // a bot that declines to call out a missed UNO is asked again every pacing delay for as long as
+    // the window stays open — a busy loop that bills for hibernation it never gets. The clock is
+    // switched off here so that the only thing that could arm the alarm is the bot.
+    const { stub, b, annId, botId } = await seatTwoHumansAndBot('CLKB4')
+    await rigMissedUno(stub, annId, botId, 0)
+
+    // Pin the bot's coin-flip to a decline. `normal` is 90% vigilant, so waiting for the 1-in-10 to
+    // come up on its own would be a flaky test.
+    await runInDurableObject(stub, (_instance, ctx) => {
+      const row = ctx.storage.sql.exec('SELECT state FROM snapshot WHERE id = 0').toArray()[0] as {
+        state: string
+      }
+      const state = JSON.parse(row.state) as GameState
+      const view = viewFor(state, botId)
+      let rng = seedRng('uno-decline')
+      let declines = false
+      for (let i = 0; i < 500 && !declines; i++) {
+        const decision = decideBot(view, rng, 'normal')
+        if (decision.intent === null) declines = true
+        else rng = decision.rng
+      }
+      expect(declines).toBe(true)
+      ctx.storage.sql.exec('UPDATE bots SET rng = ? WHERE player_id = ?', JSON.stringify(rng), botId)
+    })
+
+    b.send({ t: 'resync', lastSeq: 0 })
+    await b.waitFor('sync')
+    expect(await readClock(stub)).toBeNull() // the clock is off, so the bot is the only errand
+    const before = (await readState(stub)).seq
+
+    await deliverAlarm(stub)
+
+    expect((await readState(stub)).seq).toBe(before) // it really did decline
+    expect(await scheduledAlarm(stub)).toBeNull()
   })
 })

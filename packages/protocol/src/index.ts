@@ -18,8 +18,9 @@
  */
 
 import { z } from 'zod'
-import { LIGHT_COLORS, DARK_COLORS } from '@flipside/engine'
+import { BOT_DIFFICULTIES, LIGHT_COLORS, DARK_COLORS } from '@flipside/engine'
 import type {
+  BotDifficulty,
   Color,
   EventView,
   PhaseName,
@@ -58,6 +59,13 @@ export const MAX_NICKNAME_LENGTH = 24
 export const MAX_PLAYERS = 10
 export const MIN_PLAYERS = 2
 
+/**
+ * Computer players count against `MAX_PLAYERS` like anyone else — they occupy a real seat in the
+ * engine's `players` array. This lower cap is a separate, softer rule: a room that is all bots is
+ * a demo, not a game, so leave room for people to arrive.
+ */
+export const MAX_BOTS = MAX_PLAYERS - 1
+
 // ---------------------------------------------------------------------------------------------
 // Shared field schemas
 // ---------------------------------------------------------------------------------------------
@@ -72,8 +80,19 @@ const Nickname = z
   .min(1, 'nickname required')
   .max(MAX_NICKNAME_LENGTH, 'nickname too long')
 
+/**
+ * The prefix the server uses to build a computer player's `client_id`. Reserved, and refused on
+ * the wire below: without that, a client could send a bot's id and try to claim its seat — and its
+ * hand. The `GameRoom` refuses it a second time on the way in; this is the cheap first line.
+ */
+export const BOT_CLIENT_PREFIX = 'bot:'
+
 /** A client-generated stable id, persisted in the browser, used to reclaim a seat on reconnect. */
-const ClientId = z.string().min(8).max(64)
+const ClientId = z
+  .string()
+  .min(8)
+  .max(64)
+  .refine(id => !id.startsWith(BOT_CLIENT_PREFIX), 'that client id is reserved')
 
 /** An opaque per-round card alias, as handed to the player in their view. */
 const CardKey = z.string().min(1).max(64)
@@ -82,6 +101,9 @@ const PlayerIdSchema = z.string().min(1).max(64)
 
 export type ConnectRole = 'player' | 'spectator'
 export const RoleSchema = z.enum(['player', 'spectator'])
+
+/** How hard the computer plays. Sourced from the engine so the two never drift apart. */
+export const BotDifficultySchema = z.enum(BOT_DIFFICULTIES)
 
 // ---------------------------------------------------------------------------------------------
 // Client → Server (validated)
@@ -102,6 +124,22 @@ export const JoinSchema = z.object({
 })
 
 export const StartSchema = z.object({ t: z.literal('start') })
+
+/**
+ * Seat a computer player. Host-only, and lobby-only: the engine fixes the seat list when the game
+ * is created, so a bot cannot be dropped into a round that is already dealt.
+ */
+export const AddBotSchema = z.object({
+  t: z.literal('addBot'),
+  difficulty: BotDifficultySchema.default('normal'),
+})
+
+/** Free a seat a computer player is holding. Host-only, lobby-only, and refuses a human's id. */
+export const RemoveBotSchema = z.object({
+  t: z.literal('removeBot'),
+  playerId: PlayerIdSchema,
+})
+
 export const PlaySchema = z.object({
   t: z.literal('play'),
   key: CardKey,
@@ -132,6 +170,8 @@ export const ClientMessageSchema = z.discriminatedUnion('t', [
   CallUnoSchema,
   CalloutSchema,
   ResyncSchema,
+  AddBotSchema,
+  RemoveBotSchema,
 ])
 
 /** The **parsed** message the server acts on — `.default()`s applied, so `role`/`lastSeq` are set. */
@@ -167,6 +207,8 @@ export interface LobbyPlayer {
   name: string
   seat: number
   connected: boolean
+  /** The difficulty this seat is played at, or `null` for a human. */
+  bot: BotDifficulty | null
 }
 
 /**
@@ -203,6 +245,13 @@ export interface WelcomeMessage {
   role: ConnectRole
   /** The seat that owns "start the game". */
   host: PlayerId
+  /**
+   * Which seats are computer players. Sent here, and not inside `PlayerView`, because the engine
+   * deliberately does not know that bots exist — to the reducer they are players like any other.
+   * Bots can only be seated before the deal, so this list is complete for the life of the game and
+   * a reconnecting client gets it back with its `welcome`.
+   */
+  bots: PlayerId[]
 }
 
 /** Full authoritative snapshot for a player (join, resync, or after a deploy). */

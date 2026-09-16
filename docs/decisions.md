@@ -262,7 +262,10 @@ can make.
   | a challenge | takes the cards | a challenge they did not ask for can cost them two more cards if the accused is innocent |
 
 - **Whose clock it is:** whoever the phase says owes a decision — which is not always the player at
-  the turn. A colour choice or a challenge is owed by somebody else while the turn sits still.
+  the turn. A colour choice or a challenge is owed by somebody else while the turn sits still. With
+  one exception: **a computer player is never on the clock.** Its seat is driven (#2.1 in the plan),
+  so the alarm that matters there is the one that makes its move; forfeiting it would narrate a
+  player who has wandered off while the room was about to play for them anyway.
 - **Visible to everyone.** The countdown is on the top bar, on the tile of the player it is about,
   and large on the projected table view. A timeout is narrated in the feed like any other event, so
   nobody has to guess why the cards moved.
@@ -273,9 +276,13 @@ can make.
   engine may not read the time of day and a timer in memory would both defeat hibernation and die
   with the first quiet moment in a game. Alarm delivery is at-least-once, so the handler is
   idempotent: a duplicate finds a clock that no longer matches the phase it was armed for.
+- **It shares that alarm with the bot driver,** because a Durable Object only gets one. The room
+  arms it for whichever errand is due first and the handler works out what is actually due on
+  arrival rather than trusting why it was set — so a wake meant for a bot can find a deadline
+  expired, and the other way round, and neither loses its turn.
 - **Tested:** `packages/engine/test/timeout.test.ts` (what a forfeit costs) and
   `apps/game/test/timeout.test.ts` (the alarm: eviction mid-turn, duplicate delivery, early wake,
-  reconnect, and the countdown reaching every screen).
+  reconnect, the countdown reaching every screen, and the two errands sharing the one alarm slot).
 
 ---
 
