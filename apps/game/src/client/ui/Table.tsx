@@ -3,6 +3,7 @@ import { useRoom } from '../net/useRoom.js'
 import { Card } from './Card.js'
 import { Feed } from './Feed.js'
 import { SideBadge } from './SideBadge.js'
+import { TurnClock, useTurnClock } from './TurnClock.js'
 
 /**
  * The table view — read-only, built for a shared screen on the call. Deliberately *not* a player's
@@ -13,6 +14,7 @@ export function Table({ code }: { code: string }) {
   const room = useRoom({ code, role: 'spectator', nickname: 'Table', enabled: true })
   const table = room.table
   const nameOf = (id: string) => table?.players.find(p => p.id === id)?.name ?? '—'
+  const clock = useTurnClock(room.timer)
 
   if (!table) {
     return (
@@ -44,6 +46,12 @@ export function Table({ code }: { code: string }) {
             {table.activeColor}
           </span>
         )}
+        {clock && (
+          <span className="table-clock">
+            <TurnClock clock={clock} label={nameOf(clock.timer.player)} size={64} />
+            <span className="table-clock__who">{nameOf(clock.timer.player)} to move</span>
+          </span>
+        )}
       </header>
 
       <section className="table-players">
@@ -54,6 +62,7 @@ export function Table({ code }: { code: string }) {
               <span className="table-player__name">{p.name}</span>
               <span className="table-player__score">{p.score}</span>
               <span className="opponent__count">{p.handCount}</span>
+              {clock?.timer.player === p.id && <TurnClock clock={clock} label={p.name} size={32} />}
               {p.saidUno && <span className="tag tag--uno">UNO</span>}
             </div>
             <div className="opponent__hand">

@@ -117,11 +117,17 @@ with parametric-SVG cards, the read-only table view for a screenshare, and an ev
 The Durable Object tests run in real `workerd` and include surviving eviction mid-game; a Playwright
 pair play a full round to completion through the actual UI.
 
-**Stage 2 has started with computer players — done and green.** A pure `decideBot(PlayerView, rng)`
-policy in the engine, `addBot`/`removeBot` on the wire, and an alarm-driven driver in the
-`GameRoom`. Tables of bots play whole games to 500 in the engine tests; a lone human finishes a real
-round against one through the actual UI, and a bot takes its turn correctly after the room is evicted
-mid-game. **183 unit/integration tests + 4 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+**Stage 2 has started — computer players and the turn clock, both done and green.** A pure
+`decideBot(PlayerView, rng)` policy in the engine, `addBot`/`removeBot` on the wire, and an
+alarm-driven driver in the `GameRoom`. Tables of bots play whole games to 500 in the engine tests; a
+lone human finishes a real round against one through the actual UI, and a bot takes its turn
+correctly after the room is evicted mid-game.
 
-Still to come in Stage 2: turn timers, sound, reconnection grace, house-rule toggles, and the full
-a11y pass.
+And somebody's phone always dies mid-round, so every outstanding decision runs on a 30-second
+server-held deadline (a Durable Object storage alarm, not a `setTimeout`), counted down on every
+screen at once — the top bar, the tile of the player it is about, and large on the projected table.
+When it runs out the game forfeits exactly that one decision: draw and pass rather than play a card
+for them. See [decisions #17](docs/decisions.md) for the ruling and `turnTimeoutMs` for the knob.
+
+**227 unit/integration tests + 6 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+Still to come in Stage 2: sound, reconnection grace, house-rule toggles, and the full a11y pass.

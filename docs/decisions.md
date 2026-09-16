@@ -16,7 +16,8 @@ This file is the source of truth for those rulings. It is the prose companion to
 The ambiguity numbers (**#1–#16**) match §6 of
 [`research/rules-spec.md`](research/rules-spec.md). The decision tags (**D2–D14**) are the anchors
 used in code comments — grep `Dn` in `packages/engine/src` to jump to the implementation of any
-ruling.
+ruling. **#17** is the one entry Mattel could not have left ambiguous, because it cannot happen
+around a table: a player who simply stops playing.
 
 Every row has a test. If you change a default here, a test in `packages/engine/test` should change
 with it.
@@ -40,6 +41,7 @@ From `DEFAULT_OPTIONS` in [`types.ts`](../packages/engine/src/types.ts):
 | `stackingEnabled` | `false` | not official |
 | `scoreLimit` | `500` | official |
 | `handSize` | `7` | official |
+| `turnTimeoutMs` | `30_000` | #17 / D17 — online only |
 
 Rulings that are **structural** (not a toggle) — opening-card policy, who picks the colour after a
 Flip, the degenerate two-player cases, the challenge visibility rule, the dark-face information
@@ -239,6 +241,49 @@ Almost no digital implementation models this.
 - **Code:** redaction in [`view.ts`](../packages/engine/src/view.ts).
 - **Tested:** `test/view.test.ts` — *"the information channel"* and *"the view leaks nothing"*.
 
+### #17 — A player who stops playing · D17 · `turnTimeoutMs`
+
+Not a rules ambiguity: a physical game has no such state, because the person holding everybody up is
+sitting right there. Online they are not — their phone died, the call dropped, they went to answer
+the door — and without a ruling the table simply stops, permanently, with no legal move anyone else
+can make.
+
+- **Ruling:** every outstanding decision is on a **30-second clock**, and when it runs out the game
+  forfeits *that one decision* on the player's behalf. Configurable per room via `turnTimeoutMs`;
+  `0` switches the clock off entirely, for a group who would rather wait.
+- **What a forfeit does** — always the option that cannot be better than what the player would have
+  chosen, so that dropping off the call is never an advantage:
+
+  | Waiting on | The clock does | Why |
+  |---|---|---|
+  | a play | draws one card, then declines to play it | the physical game's "you snooze, you draw"; it never picks a card *for* them, because picking the card is the game |
+  | the drawn-card choice | passes | the same, one step in |
+  | a colour choice | takes the side's first colour | a real decision we cannot make well for them, but a fixed one replays identically, cannot be gamed by an opponent, and beats hanging the table |
+  | a challenge | takes the cards | a challenge they did not ask for can cost them two more cards if the accused is innocent |
+
+- **Whose clock it is:** whoever the phase says owes a decision — which is not always the player at
+  the turn. A colour choice or a challenge is owed by somebody else while the turn sits still. With
+  one exception: **a computer player is never on the clock.** Its seat is driven (#2.1 in the plan),
+  so the alarm that matters there is the one that makes its move; forfeiting it would narrate a
+  player who has wandered off while the room was about to play for them anyway.
+- **Visible to everyone.** The countdown is on the top bar, on the tile of the player it is about,
+  and large on the projected table view. A timeout is narrated in the feed like any other event, so
+  nobody has to guess why the cards moved.
+- **Where it lives:** the *duration* is a rule option and the *forfeit* is a rule
+  ([`reduce.ts`](../packages/engine/src/reduce.ts)'s `doTimeout`, plus `playerToAct` in
+  [`clock.ts`](../packages/engine/src/clock.ts)), but the **clock itself is the Durable Object's**
+  ([`room.ts`](../apps/game/src/worker/room.ts)) — a storage alarm, never a `setTimeout`, because the
+  engine may not read the time of day and a timer in memory would both defeat hibernation and die
+  with the first quiet moment in a game. Alarm delivery is at-least-once, so the handler is
+  idempotent: a duplicate finds a clock that no longer matches the phase it was armed for.
+- **It shares that alarm with the bot driver,** because a Durable Object only gets one. The room
+  arms it for whichever errand is due first and the handler works out what is actually due on
+  arrival rather than trusting why it was set — so a wake meant for a bot can find a deadline
+  expired, and the other way round, and neither loses its turn.
+- **Tested:** `packages/engine/test/timeout.test.ts` (what a forfeit costs) and
+  `apps/game/test/timeout.test.ts` (the alarm: eviction mid-turn, duplicate delivery, early wake,
+  reconnect, the countdown reaching every screen, and the two errands sharing the one alarm slot).
+
 ---
 
 ## Non-ambiguity options (plain config knobs)
@@ -250,4 +295,5 @@ change them:
 |---|---|---|
 | `scoreLimit` | `500` | First to this many points wins the game. |
 | `handSize` | `7` | Cards dealt to each player at the start of a round. |
+| `turnTimeoutMs` | `30000` | How long a player has per decision before the clock forfeits it for them (#17 / D17). `0` switches the clock off. |
 | `stackingEnabled` | `false` | Stacking Draw cards. **Confirmed NOT official** (Mattel, May 2019); off by default, available as a house rule. Tested in `test/actions.test.ts` — *"stacking is off by default"*. |

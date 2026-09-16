@@ -211,9 +211,9 @@ production-only bugs.
 
 ## Stage 2 — Feel
 
-Turn timers · sound · spectators · reconnection grace · house-rule toggles (stacking, 7-0,
-draw-to-match, jump-in) · ✅ **computer players** · animation polish · full a11y pass
-(every card is a `<button>`; the whole game is keyboard- and screen-reader-playable).
+~~Turn timers~~ · sound · spectators · reconnection grace · house-rule toggles (stacking, 7-0,
+draw-to-match, jump-in) · ✅ **computer players** · ✅ **turn clock** · animation polish · full a11y
+pass (every card is a `<button>`; the whole game is keyboard- and screen-reader-playable).
 
 ### 2.1 Computer players — done
 
@@ -249,6 +249,19 @@ Three details that are load-bearing rather than decorative:
 - **A bot's `client_id` namespace (`bot:`) is reserved on the wire.** Player ids are public on the
   roster, so without that refusal a client could send a bot's id and be handed its seat, and its
   hand. Refused by the zod schema and again inside the DO.
+
+### 2.2 Turn clock — done
+
+30 seconds per outstanding decision, on a `ctx.storage.setAlarm()` deadline held in SQLite (never a
+`setTimeout`, never a class field), counted down on every screen from a duration the server ships
+with each frame, and forfeited by a `timeout` action the engine reduces like any other. The ruling
+on what a forfeit costs is [decisions #17](decisions.md); the alarm's own footguns — at-least-once
+delivery, waking early, eviction mid-turn — are covered in `apps/game/test/timeout.test.ts`.
+
+The clock and the bot driver share one alarm, because a Durable Object only has one: the room arms
+it for whichever is due first, and the handler runs both errands. A bot seat is never forfeited —
+it is driven, so the clock's job there is only to stop a stuck room, not to punish a player who is
+not there.
 
 ---
 

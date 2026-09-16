@@ -30,6 +30,8 @@ export {
   seatAfter,
 } from './effects.js'
 
+export { playerToAct } from './clock.js'
+
 export { handValue, roundPoints } from './score.js'
 
 export { BOT_DIFFICULTIES, decideBot } from './bot.js'
