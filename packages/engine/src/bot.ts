@@ -218,6 +218,16 @@ const SHED_VALUE: Record<string, number> = {
  */
 const WILD_URGE: Record<string, number> = { wild: 6, wildDraw2: 4, wildDrawColor: 3 }
 
+/**
+ * What a wild is worth instead when the next player is nearly out — a *separate* table, because the
+ * ordering inverts. `WILD_URGE` ranks a plain Wild highest precisely because it is the one that
+ * costs nothing to spend; under pressure that makes it the one card you least want to play, since
+ * it is the only wild that does not punish the player it lands on. A flat bonus on top of
+ * `WILD_URGE` would carry the quiet-turn ordering over intact and play them in exactly the wrong
+ * order, so the pressure case names its own numbers.
+ */
+const WILD_PRESSURE: Record<string, number> = { wild: 0, wildDraw2: 90, wildDrawColor: 100 }
+
 /** Cards that cost the next player something. Worth a lot more when they are about to go out. */
 const AGGRESSIVE: readonly string[] = ['draw1', 'draw5', 'skip', 'skipEveryone']
 
@@ -257,9 +267,16 @@ function choosePlay(view: PlayerView, rng: RngState, profile: Profile): [CardVie
  *
  * Wilds invert (1) and (2): they are the escape hatch that stops you drawing on a dead turn, so
  * their value is heavily discounted unless they are landing a draw on someone who is nearly out.
+ * Note "landing a draw" is the whole of it — a plain Wild punishes nobody, so pressure is not a
+ * reason to spend one, and it keeps its quiet-turn score.
  */
 function scoreCard(face: Face, counts: Record<string, number>, pressure: boolean): number {
-  if (isWildKind(face)) return (WILD_URGE[face.kind] ?? 5) + (pressure ? 90 : 0)
+  if (isWildKind(face)) {
+    const urge = WILD_URGE[face.kind] ?? 5
+    // `max`, so pressure can only ever make a wild *more* attractive — a plain Wild simply keeps
+    // its quiet-turn score and goes on losing to anything that actually costs the victim a card.
+    return pressure ? Math.max(urge, WILD_PRESSURE[face.kind] ?? 0) : urge
+  }
 
   let score = face.kind === 'number' ? (face.value ?? 0) : (SHED_VALUE[face.kind] ?? 15)
   if (AGGRESSIVE.includes(face.kind)) score += pressure ? 45 : 10

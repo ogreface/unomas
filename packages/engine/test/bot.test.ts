@@ -332,6 +332,48 @@ describe('decideBot — tactics', () => {
     expect(cardIdForKey(g.state, intent.key)).toBe(draw5)
   })
 
+  it('spends the wild that punishes, not the one that is cheapest to spend', () => {
+    const d = new Deal()
+    const g = new Game({ players: 2 })
+    g.do({ type: 'startRound' })
+    const wild = d.face('light', 'wild')
+    const wildDraw2 = d.face('light', 'wildDraw2')
+    g.rig({
+      // Both wilds are always legal, so the only thing separating them is what the bot wants.
+      hands: { p0: [wild, wildDraw2, ...d.filler(2)], p1: [d.face('light', 'blue 1')] },
+      discard: [d.face('light', 'red 3')],
+      turn: 'p0',
+      phase: { t: 'awaitingPlay' },
+      declaredColor: null,
+    })
+    const intent = ask(g.state, 'p0')
+    if (intent?.t !== 'play') throw new Error(`expected a play, got ${intent?.t}`)
+    // A plain Wild costs the opponent nothing, and they are one card from going out. The whole
+    // point of holding a Wild Draw Two is this turn.
+    expect(cardIdForKey(g.state, intent.key)).toBe(wildDraw2)
+  })
+
+  it('does not burn a plain wild on an opponent who is about to go out', () => {
+    const d = new Deal()
+    const g = new Game({ players: 2 })
+    g.do({ type: 'startRound' })
+    const wild = d.face('light', 'wild')
+    const draw1 = d.face('light', 'red draw1')
+    g.rig({
+      hands: {
+        p0: [wild, draw1, ...d.filler(2, { notColor: 'red', notValue: 3 })],
+        p1: [d.face('light', 'blue 1')],
+      },
+      discard: [d.face('light', 'red 3')],
+      turn: 'p0',
+      phase: { t: 'awaitingPlay' },
+      declaredColor: null,
+    })
+    const intent = ask(g.state, 'p0')
+    if (intent?.t !== 'play') throw new Error(`expected a play, got ${intent?.t}`)
+    expect(cardIdForKey(g.state, intent.key)).toBe(draw1)
+  })
+
   it('holds its wild when an ordinary card will do', () => {
     const d = new Deal()
     const g = new Game({ players: 3 })
