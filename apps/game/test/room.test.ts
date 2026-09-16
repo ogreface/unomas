@@ -1,8 +1,9 @@
-import { evictDurableObject, runInDurableObject } from 'cloudflare:test'
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
-import { assertCardConservation } from '@flipside/engine'
+import { CARDS_BY_ID, assertCardConservation, decideBot, seedRng, viewFor } from '@flipside/engine'
+import { BOT_CLIENT_PREFIX } from '@flipside/protocol'
 import type { GameState } from '@flipside/engine'
-import { Client, autoMove, stubFor } from './helpers.js'
+import { Client, autoMove, owes, stubFor, takeTurn } from './helpers.js'
 
 /** Create the room, seat two players, and return their live clients. */
 async function seatTwo(code: string): Promise<{
@@ -256,5 +257,277 @@ describe('GameRoom — spectators', () => {
     expect(welcome.role).toBe('spectator')
     const tableSync = await s.waitFor('tableSync')
     expect(tableSync.table.players).toHaveLength(2)
+  })
+})
+
+describe('GameRoom — computer players', () => {
+  /**
+   * Run the one bot move the room currently owes, and wait for its broadcast to reach `watcher`.
+   *
+   * Alarms are driven explicitly rather than waited on: `runDurableObjectAlarm` runs whatever is
+   * scheduled *now*, which makes the test deterministic and, better, turns "the DO scheduled an
+   * alarm at all" into the assertion. Returns false when nothing was scheduled.
+   */
+  async function runBotMove(stub: ReturnType<typeof stubFor>, watcher: Client): Promise<boolean> {
+    const before = snapshotSeq(await readState(stub))
+    if (!(await runDurableObjectAlarm(stub))) return false
+    // A bot may wake, decline a coin-flip and do nothing at all; only a move broadcasts.
+    if (snapshotSeq(await readState(stub)) === before) return false
+    await watcher.waitFor('events')
+    return true
+  }
+
+  /** Create a room with one human host, and return the host's client. */
+  async function seatOne(code: string): Promise<{ stub: ReturnType<typeof stubFor>; a: Client }> {
+    const stub = stubFor(code)
+    await stub.createRoom(code)
+    const a = await Client.connect(stub, code)
+    a.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
+    await a.waitFor('welcome')
+    await a.waitFor('roster')
+    return { stub, a }
+  }
+
+  it('lets the host seat a computer player, and shows it on the roster', async () => {
+    const { a } = await seatOne('BOT1')
+
+    a.send({ t: 'addBot', difficulty: 'easy' })
+    const roster = await a.waitFor('roster')
+
+    expect(roster.players).toHaveLength(2)
+    const bot = roster.players.find(p => p.id !== roster.host)
+    expect(bot?.bot).toBe('easy')
+    expect(bot?.seat).toBe(1)
+    // The human is still a human.
+    expect(roster.players.find(p => p.id === roster.host)?.bot).toBeNull()
+  })
+
+  it('tells a reconnecting client which seats are computers', async () => {
+    const { stub, a } = await seatOne('BOT2')
+    a.send({ t: 'addBot', difficulty: 'normal' })
+    const roster = await a.waitFor('roster')
+    const botId = roster.players.find(p => p.bot !== null)?.id
+
+    const a2 = await Client.connect(stub, 'BOT2')
+    a2.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
+    const welcome = await a2.waitFor('welcome')
+    expect(welcome.bots).toEqual([botId])
+  })
+
+  it('refuses a bot from anyone but the host', async () => {
+    const { b } = await seatTwo('BOT3')
+    b.send({ t: 'addBot' })
+    const err = await b.waitFor('error')
+    expect(err.code).toBe('not_host')
+  })
+
+  it('refuses a bot once the game has started', async () => {
+    const { a, b } = await seatTwo('BOT4')
+    await startGame(a, b)
+    a.send({ t: 'addBot' })
+    const err = await a.waitFor('error')
+    expect(err.code).toBe('wrong_phase')
+  })
+
+  it('removes a bot and closes the gap in the seating', async () => {
+    const { a } = await seatOne('BOT5')
+    a.send({ t: 'addBot' })
+    const withOne = await a.waitFor('roster')
+    a.send({ t: 'addBot' })
+    const withTwo = await a.waitFor('roster')
+    expect(withTwo.players.map(p => p.seat)).toEqual([0, 1, 2])
+
+    // Remove the middle seat; the last player must slide down into it.
+    const middle = withOne.players.find(p => p.bot !== null)!
+    a.send({ t: 'removeBot', playerId: middle.id })
+    const after = await a.waitFor('roster')
+    expect(after.players).toHaveLength(2)
+    expect(after.players.map(p => p.seat)).toEqual([0, 1])
+    expect(after.players.some(p => p.id === middle.id)).toBe(false)
+  })
+
+  it('refuses to "remove" a human through the bot door', async () => {
+    // Removing a bot and kicking a person are different features with different consent, so
+    // `removeBot` must refuse a human's id rather than quietly evicting them.
+    const { a } = await seatTwo('BOT6')
+    a.send({ t: 'resync', lastSeq: 0 })
+    const roster = await a.waitFor('roster')
+    const human = roster.players.find(p => p.id !== roster.host)!
+    expect(human.bot).toBeNull()
+
+    a.send({ t: 'removeBot', playerId: human.id })
+    const err = await a.waitFor('error')
+    expect(err.code).toBe('bad_message')
+
+    a.send({ t: 'resync', lastSeq: 0 })
+    expect((await a.waitFor('roster')).players).toHaveLength(2)
+  })
+
+  it('will not hand a bot’s seat to a browser that claims its clientId', async () => {
+    const { stub, a } = await seatOne('BOT7')
+    a.send({ t: 'addBot' })
+    const roster = await a.waitFor('roster')
+    const botId = roster.players.find(p => p.bot !== null)!.id
+
+    // Player ids are on the roster, and a bot's client_id is derived from one — so the id is
+    // effectively public. Claiming it must be refused outright, not seated and not honoured.
+    const impostor = await Client.connect(stub, 'BOT7')
+    impostor.send({ t: 'join', clientId: `${BOT_CLIENT_PREFIX}${botId}`, nickname: 'Sneak' })
+    const err = await impostor.waitFor('error')
+    expect(err.code).toBe('bad_message')
+
+    // …and the room is untouched: still one human and one bot.
+    a.send({ t: 'resync', lastSeq: 0 })
+    expect((await a.waitFor('roster')).players).toHaveLength(2)
+  })
+
+  it('one human and one bot play a whole round to completion', async () => {
+    const { stub, a } = await seatOne('BOT8')
+    a.send({ t: 'addBot', difficulty: 'normal' })
+    await a.waitFor('roster')
+
+    a.send({ t: 'start' })
+    await a.waitFor('events')
+
+    // Drive only the human. Every other move on the table is the room's own alarm handler deciding
+    // from the bot's redacted view — `runDurableObjectAlarm` returning true is itself the assertion
+    // that the DO scheduled one.
+    let botMoves = 0
+    for (let i = 0; i < 600; i++) {
+      const view = a.latestView
+      if (!view || view.phase.t === 'roundOver' || view.phase.t === 'gameOver') break
+      if (owes(view) === view.you) {
+        takeTurn(a, view)
+        await a.waitFor('events')
+      } else {
+        if (!(await runBotMove(stub, a))) break
+        botMoves++
+      }
+    }
+
+    // A round that ends with a hand worth 500 or more ends the game with it, so both are a round
+    // played to completion — which is the claim here.
+    expect(['roundOver', 'gameOver']).toContain(a.latestView?.phase.t)
+    expect(botMoves).toBeGreaterThan(0)
+    expect(a.errors).toEqual([])
+    assertCardConservation(await readState(stub))
+  })
+
+
+  it('a bot catches a human who drops to one card without saying UNO', async () => {
+    const { stub, a } = await seatOne('BOTA')
+    a.send({ t: 'addBot', difficulty: 'normal' })
+    await a.waitFor('roster')
+    a.send({ t: 'start' })
+    const started = await a.waitFor('events')
+    const you = started.view.you
+
+    // Rig the deal so the human holds exactly two inert number cards of the active colour: playing
+    // one leaves them on a single card, with no UNO called and the window wide open.
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      const row = ctx.storage.sql.exec('SELECT state FROM snapshot WHERE id = 0').toArray()[0] as {
+        state: string
+      }
+      const state = JSON.parse(row.state) as GameState
+
+      const faceOf = (id: string, side: GameState['side']) => CARDS_BY_ID.get(id)![side]
+      const pool = [...state.players.flatMap(p => p.hand), ...state.drawPile]
+      const numbers = pool.filter(id => faceOf(id, state.side).kind === 'number')
+      const anchor = numbers[0]!
+      const color = faceOf(anchor, state.side).color
+      const sameColor = numbers.filter(
+        id => id !== anchor && faceOf(id, state.side).color === color,
+      )
+      const humanHand = sameColor.slice(0, 2)
+      const botHand = numbers.filter(id => id !== anchor && !humanHand.includes(id)).slice(0, 3)
+      const placed = new Set([anchor, ...humanHand, ...botHand])
+
+      state.discardPile = [...state.discardPile, anchor]
+      state.drawPile = pool.filter(id => !placed.has(id))
+      for (const p of state.players) {
+        p.hand = p.id === you ? [...humanHand] : [...botHand]
+        p.saidUno = false
+      }
+      state.turn = state.players.findIndex(p => p.id === you)
+      state.phase = { t: 'awaitingPlay' }
+      state.declaredColor = null
+      state.unoWindow = null
+
+      assertCardConservation(state)
+      ctx.storage.sql.exec(
+        'INSERT OR REPLACE INTO snapshot (id, seq, state) VALUES (0, ?, ?)',
+        state.seq,
+        JSON.stringify(state),
+      )
+
+    })
+
+    a.send({ t: 'resync', lastSeq: 0 })
+    const sync = await a.waitFor('sync')
+    expect(sync.view.hand).toHaveLength(2)
+    expect(sync.view.legalPlays.length).toBeGreaterThan(0)
+
+    // Play, and say nothing.
+    a.send({ t: 'play', key: sync.view.legalPlays[0]! })
+    await a.waitFor('events')
+
+    // Now the window is open, pin the bot's coin-flip. `normal` is 90% vigilant, and the 1-in-10
+    // decline is not a near miss: the bot goes on to take its turn, which closes the window for
+    // good. Asserting the 9 is a flaky test. So search for the first entropy that makes *this* bot,
+    // from *this* view, decide to call out, and store it as the bot's rng. Whether it rolls well is
+    // the engine's business and `bot.test.ts` covers it; what belongs here is that a callout it has
+    // decided on survives the trip through a cold alarm.
+    await runInDurableObject(stub, (_instance, ctx) => {
+      const row = ctx.storage.sql.exec('SELECT state FROM snapshot WHERE id = 0').toArray()[0] as {
+        state: string
+      }
+      const state = JSON.parse(row.state) as GameState
+      const botId = state.players.find(p => p.id !== you)!.id
+      const view = viewFor(state, botId)
+      let rng = seedRng('uno-callout')
+      let willCallOut = false
+      for (let i = 0; i < 500 && !willCallOut; i++) {
+        const decision = decideBot(view, rng, 'normal')
+        if (decision.intent?.t === 'callout') willCallOut = true
+        else rng = decision.rng
+      }
+      expect(willCallOut).toBe(true)
+      ctx.storage.sql.exec('UPDATE bots SET rng = ? WHERE player_id = ?', JSON.stringify(rng), botId)
+    })
+
+    // With the flip pinned, the alarm existing at all is the claim: catching a missed UNO is its
+    // own reason to wake the room, separate from whose turn it is.
+    expect(await runDurableObjectAlarm(stub)).toBe(true)
+    const caught = await a.waitFor('events')
+    expect(caught.events.some(e => e.t === 'unoPenalty' && e.player === you)).toBe(true)
+    // One card left, plus the two-card penalty for being caught.
+    expect(a.latestView?.hand).toHaveLength(3)
+  })
+
+  it('a bot takes its turn after the room has been evicted mid-game', async () => {
+    const { stub, a } = await seatOne('BOT9')
+    a.send({ t: 'addBot', difficulty: 'normal' })
+    await a.waitFor('roster')
+    a.send({ t: 'start' })
+    await a.waitFor('events')
+
+    // Play until the table is waiting on the bot rather than on the human.
+    for (let i = 0; i < 200; i++) {
+      const view = a.latestView
+      if (!view) throw new Error('no view')
+      if (view.phase.t === 'roundOver' || view.phase.t === 'gameOver') return
+      if (owes(view) !== view.you) break
+      takeTurn(a, view)
+      await a.waitFor('events')
+    }
+
+    const seqBefore = snapshotSeq(await readState(stub))
+
+    // Throw the object away mid-move. The bot's turn lives in *storage* — that is the whole reason
+    // it is an alarm and not a `setTimeout`, which would have been lost with the instance.
+    await evictDurableObject(stub)
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true)
+    expect(snapshotSeq(await readState(stub))).toBeGreaterThan(seqBefore)
   })
 })

@@ -26,6 +26,13 @@ export default defineConfig({
             isolatedStorage: true,
             main: './src/worker/index.ts',
             wrangler: { configPath: './wrangler.jsonc' },
+            // Push the computer players' pacing delay far out of reach. The bot tests drive each
+            // move explicitly with `runDurableObjectAlarm`, which runs whatever is scheduled
+            // regardless of when it was due — so a long delay means the wall clock can never fire
+            // an alarm underneath a test and race it. (Automatic delivery is what production uses,
+            // and the Playwright suite is what proves it: a lone human finishes a round against a
+            // bot with nothing driving it.)
+            miniflare: { bindings: { BOT_DELAY_MS: '600000' } },
           }),
         ],
         test: {
