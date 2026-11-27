@@ -10,12 +10,15 @@ import { ColorPicker } from './ColorPicker.js'
 import { Feed } from './Feed.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
 import type { ClockReading } from './TurnClock.js'
+import { useSoundCues } from './useSoundCues.js'
+import { playCues, setSoundMuted, soundMuted } from '../lib/sound.js'
 
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
   const [pendingWild, setPendingWild] = useState<CardView | null>(null)
   // One ticking clock per screen, read once and handed down — see `TurnClock.tsx`.
   const clock = useTurnClock(room.timer)
+  useSoundCues(view, room.feed, clock)
 
   const nameOf = (id: string) => view.players.find(p => p.id === id)?.name ?? '—'
   const me = view.players.find(p => p.id === view.you)
@@ -200,10 +203,34 @@ function TopBar({
             className="active-color"
             style={{ background: `var(--ink-${view.activeColor})`, color: `var(--ink-${view.activeColor})` }}
           />
-          {view.activeColor}
+          <span className="active-color-tag__name">{view.activeColor}</span>
         </span>
       )}
+      <SoundToggle />
     </header>
+  )
+}
+
+/** Sound on or off, remembered on this device. Turning it on plays the turn chime, so you know. */
+function SoundToggle() {
+  const [muted, setMuted] = useState(soundMuted)
+  function toggle() {
+    const next = !muted
+    setMuted(next)
+    void setSoundMuted(next).then(() => {
+      if (!next) playCues(['yourTurn'])
+    })
+  }
+  return (
+    <button
+      className="btn btn--ghost btn--tiny sound-toggle"
+      aria-label="Mute sounds"
+      aria-pressed={muted}
+      title={muted ? 'Sounds are off' : 'Sounds are on'}
+      onClick={toggle}
+    >
+      {muted ? '🔇' : '🔊'}
+    </button>
   )
 }
 
