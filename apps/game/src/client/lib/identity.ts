@@ -6,8 +6,10 @@
  * Nothing in here may throw. It runs on the first paint and inside the socket's `open` handler, and
  * a throw in either place is invisible: the app renders a blank screen, or the lobby sits there
  * looking like a room nobody joined. Both of the browser APIs it needs can be missing on a real
- * phone — see `randomId` and `readStore` — so both are guarded.
+ * phone — see `randomId` and `storage.ts` — so both are guarded.
  */
+
+import { readStore, writeStore } from './storage.js'
 
 const CLIENT_ID_KEY = 'flipside.clientId'
 const NICKNAME_KEY = 'flipside.nickname'
@@ -37,32 +39,6 @@ function randomId(): string {
   // No Web Crypto at all. Not reachable in any browser that can run this app, but an id that is
   // merely unlikely to collide beats a hard crash that leaves the player staring at a dead lobby.
   return `x-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
-
-/**
- * iOS Safari throws on *any* `localStorage` access under "Block All Cookies", and historically
- * throws on `setItem` in Private Browsing. Neither is exotic enough to crash the app over, so the
- * store degrades to memory: identity then lasts as long as the tab, which is long enough to play.
- */
-const memory = new Map<string, string>()
-
-function readStore(key: string): string | null {
-  const cached = memory.get(key)
-  if (cached !== undefined) return cached
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
-function writeStore(key: string, value: string): void {
-  memory.set(key, value)
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    // Storage is blocked; the in-memory copy above keeps this tab consistent until it closes.
-  }
 }
 
 /**

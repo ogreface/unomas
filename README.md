@@ -129,6 +129,10 @@ screen at once — the top bar, the tile of the player it is about, and large on
 When it runs out the game forfeits exactly that one decision: draw and pass rather than play a card
 for them. See [decisions #17](docs/decisions.md) for the ruling and `turnTimeoutMs` for the knob.
 
+Each phone also makes a little noise at the moments that matter to its player: their turn arriving,
+anybody calling UNO, their own clock running out, and the end of the game — muted from the speaker
+button on the top bar. See [the plan, §2.3](docs/plan.md#23-sound--done).
+
 The toasts narrate each move and fade; for the "wait, who skipped me?" moment, **Log** in the top
 bar (and on the table view) opens a drawer with every line of that narration since the deal. The
 room keeps the log, in the form the whole table may see, and sends each screen whatever part of it
@@ -136,5 +140,5 @@ that screen is missing — so a phone that refreshes, reconnects or rides out a 
 whole game. A game already under way when the log shipped has its opening rebuilt, once, by
 replaying the action log, and the result is kept only if it lands on exactly the stored game.
 
-**242 unit/integration tests + 7 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
-Still to come in Stage 2: sound, reconnection grace, house-rule toggles, and the full a11y pass.
+**310 unit/integration tests + 8 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+Still to come in Stage 2: reconnection grace, house-rule toggles, and the full a11y pass.

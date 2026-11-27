@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { playerToAct } from '../src/index.js'
+import { playerToAct, playerToActInView, tableView, viewFor } from '../src/index.js'
 import type { CardId, PlayerId } from '../src/index.js'
 import { Deal, Game, expectEvent, noEvent } from './harness.js'
 
@@ -52,6 +52,60 @@ describe('playerToAct — who the clock runs against', () => {
     expect(playerToAct(g.state)).toBeNull()
     g.rig({ phase: { t: 'gameOver', winner: 'p0' } })
     expect(playerToAct(g.state)).toBeNull()
+  })
+})
+
+describe('playerToActInView — the same answer, from what a screen is sent', () => {
+  it('names the challenger while a wild draw is being decided, though the turn has not moved', () => {
+    const d = new Deal()
+    const wd2 = d.face('light', 'wildDraw2')
+    const g = rigged(d.face('light', 'blue 4'), {
+      p0: [wd2, ...d.filler(2)],
+      p1: d.filler(3),
+      p2: d.filler(3),
+    })
+
+    g.do({ type: 'play', player: 'p0', card: wd2, declaredColor: 'red' })
+    expect(g.phase).toBe('awaitingChallenge')
+
+    // The turn stays with whoever played the card until the challenge resolves — so a screen that
+    // reads `turn` to say who is up names the one player at the table who has nothing left to do.
+    for (const id of ['p0', 'p1', 'p2']) {
+      const view = viewFor(g.state, id)
+      expect(view.turn).toBe('p0')
+      expect(playerToActInView(view)).toBe('p1')
+    }
+    expect(playerToActInView(tableView(g.state))).toBe('p1')
+  })
+
+  it('names the chooser while a colour is owed', () => {
+    const d = new Deal()
+    const g = rigged(d.face('light', 'blue 4'), { p0: d.filler(3), p1: d.filler(3) })
+    g.rig({ phase: { t: 'awaitingColorChoice', chooser: 'p1', reason: 'opening', resume: null } })
+    expect(playerToActInView(viewFor(g.state, 'p0'))).toBe('p1')
+  })
+
+  it('never disagrees with the clock, in any phase', () => {
+    const d = new Deal()
+    const wd2 = d.face('light', 'wildDraw2')
+    const g = rigged(d.face('light', 'blue 4'), {
+      p0: [wd2, ...d.filler(2)],
+      p1: d.filler(3),
+      p2: d.filler(3),
+    })
+    const agrees = (): void => {
+      const owed = playerToAct(g.state)
+      for (const p of g.state.players) expect(playerToActInView(viewFor(g.state, p.id))).toBe(owed)
+      expect(playerToActInView(tableView(g.state))).toBe(owed)
+    }
+
+    agrees() // awaitingPlay
+    g.do({ type: 'play', player: 'p0', card: wd2, declaredColor: 'red' })
+    agrees() // awaitingChallenge
+    g.do({ type: 'acceptDraw', player: 'p1' })
+    agrees() // awaitingPlay again, two seats on
+    g.rig({ phase: { t: 'roundOver', winner: 'p0', points: 20 } })
+    agrees() // nobody
   })
 })
 
