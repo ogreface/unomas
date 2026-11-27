@@ -16,7 +16,7 @@ export function Players({
   players,
   you,
   side,
-  turn,
+  toAct,
   unoWindow,
   clock,
   bots,
@@ -25,7 +25,11 @@ export function Players({
   players: PlayerSummaryView[]
   you: string
   side: Side
-  turn: string | null
+  /**
+   * Who the table is waiting on — the seat that gets the highlight. Not `view.turn`: during a
+   * challenge the turn still sits with the player who played the wild draw.
+   */
+  toAct: string | null
   unoWindow: string | null
   clock: ClockReading | null
   /** Seats played by the computer. Labelled, because "why is Byte so slow" deserves an answer. */
@@ -38,7 +42,7 @@ export function Players({
   return (
     <div className="opponents">
       {opponents.map(p => (
-        <div key={p.id} className={`opponent${p.id === turn ? ' opponent--turn' : ''}`}>
+        <div key={p.id} className={`opponent${p.id === toAct ? ' opponent--turn' : ''}`}>
           <div className="opponent__head">
             <span className="seat-dot" data-seat={p.seat} />
             <span className="opponent__name">{p.name}</span>

@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import { playerToActInView } from '@flipside/engine'
 import type { CardView, Color, PlayerView } from '@flipside/engine'
 import { SideBadge } from './SideBadge.js'
 import type { RoomState } from '../net/useRoom.js'
+import { turnLabel } from '../lib/turnLabel.js'
 import { navigate } from '../App.js'
 import { Piles } from './Piles.js'
 import { Players } from './Players.js'
@@ -20,6 +22,10 @@ export function Board({ room }: { room: RoomState }) {
   const nameOf = (id: string) => view.players.find(p => p.id === id)?.name ?? '—'
   const me = view.players.find(p => p.id === view.you)
   const myTurn = view.turn === view.you
+  // Who the table is waiting on. Usually the player at the turn, but not always: a wild draw leaves
+  // the turn where it was while the *next* player decides whether to challenge. Everything that
+  // points at a person — the label, the highlighted seat — follows this, so it agrees with the clock.
+  const toAct = playerToActInView(view)
   const phase = view.phase
 
   const canPlay = (phase.t === 'awaitingPlay' || phase.t === 'awaitingDrawnCardChoice') && myTurn
@@ -49,9 +55,8 @@ export function Board({ room }: { room: RoomState }) {
       <TopBar
         view={view}
         nameOf={nameOf}
-        myTurn={myTurn}
+        bots={room.bots}
         clock={clock}
-        thinking={view.turn !== null && room.bots.has(view.turn)}
         onLeave={() => navigate('/')}
       />
 
@@ -59,7 +64,7 @@ export function Board({ room }: { room: RoomState }) {
         players={view.players}
         you={view.you}
         side={view.side}
-        turn={view.turn}
+        toAct={toAct}
         unoWindow={view.unoWindow}
         clock={clock}
         bots={room.bots}
@@ -159,30 +164,20 @@ export function Board({ room }: { room: RoomState }) {
 function TopBar({
   view,
   nameOf,
-  myTurn,
+  bots,
   clock,
-  thinking,
   onLeave,
 }: {
   view: PlayerView
   nameOf: (id: string) => string
-  myTurn: boolean
+  /** Seats played by the computer: the label says they are thinking rather than looking like a stall. */
+  bots: Set<string>
   clock: ClockReading | null
-  /** The seat on turn is a computer player, so say so rather than looking like a stall. */
-  thinking: boolean
   onLeave: () => void
 }) {
-  const turnLabel =
-    view.turn === null
-      ? '—'
-      : myTurn
-        ? 'Your turn'
-        : thinking
-          ? `${nameOf(view.turn)} is thinking…`
-          : `${nameOf(view.turn)}’s turn`
-  // The clock belongs to whoever owes the decision, which is not always the player at the turn: a
-  // colour choice or a challenge is owed by somebody else while the turn sits still. A bot is never
-  // on it — the room plays for it rather than waiting — so a thinking seat wears no ring.
+  // The label and the clock both belong to whoever owes the decision, which is not always the player
+  // at the turn: a challenge is owed by somebody else while the turn sits still. A bot is never on
+  // the clock — the room plays for it rather than waiting — so a thinking seat wears no ring.
   const onTheClock = clock ? clock.timer.player : null
   const clockLabel = onTheClock === view.you ? 'You' : onTheClock ? nameOf(onTheClock) : ''
   return (
@@ -191,7 +186,7 @@ function TopBar({
         ‹
       </button>
       <SideBadge side={view.side} />
-      <span className="turn-label">{turnLabel}</span>
+      <span className="turn-label">{turnLabel(view, bots)}</span>
       {clock && <TurnClock clock={clock} label={clockLabel} size={34} />}
       <span className="dir">{view.direction === 1 ? '↻' : '↺'}</span>
       {view.activeColor && (
