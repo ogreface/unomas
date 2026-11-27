@@ -10,6 +10,7 @@ import { ColorPicker } from './ColorPicker.js'
 import { Feed } from './Feed.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
 import type { ClockReading } from './TurnClock.js'
+import { upNext } from '../lib/turnOrder.js'
 
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
@@ -20,6 +21,7 @@ export function Board({ room }: { room: RoomState }) {
   const nameOf = (id: string) => view.players.find(p => p.id === id)?.name ?? '—'
   const me = view.players.find(p => p.id === view.you)
   const myTurn = view.turn === view.you
+  const next = upNext(view)
   const phase = view.phase
 
   const canPlay = (phase.t === 'awaitingPlay' || phase.t === 'awaitingDrawnCardChoice') && myTurn
@@ -50,6 +52,7 @@ export function Board({ room }: { room: RoomState }) {
         view={view}
         nameOf={nameOf}
         myTurn={myTurn}
+        next={next}
         clock={clock}
         thinking={view.turn !== null && room.bots.has(view.turn)}
         onLeave={() => navigate('/')}
@@ -59,7 +62,9 @@ export function Board({ room }: { room: RoomState }) {
         players={view.players}
         you={view.you}
         side={view.side}
+        direction={view.direction}
         turn={view.turn}
+        next={next}
         unoWindow={view.unoWindow}
         clock={clock}
         bots={room.bots}
@@ -160,6 +165,7 @@ function TopBar({
   view,
   nameOf,
   myTurn,
+  next,
   clock,
   thinking,
   onLeave,
@@ -167,6 +173,12 @@ function TopBar({
   view: PlayerView
   nameOf: (id: string) => string
   myTurn: boolean
+  /**
+   * The seat being played on. Named here as well as tagged in the strip, because on a phone the
+   * strip can't always show both ends of the turn at once — when play wraps round the end of the
+   * row, the next seat is at the far end of it.
+   */
+  next: string | null
   clock: ClockReading | null
   /** The seat on turn is a computer player, so say so rather than looking like a stall. */
   thinking: boolean
@@ -191,9 +203,15 @@ function TopBar({
         ‹
       </button>
       <SideBadge side={view.side} />
-      <span className="turn-label">{turnLabel}</span>
+      <span className="turn-status">
+        <span className="turn-label">{turnLabel}</span>
+        {next !== null && (
+          <span className={`turn-next${next === view.you ? ' turn-next--you' : ''}`}>
+            {next === view.you ? 'You’re next' : `Next: ${nameOf(next)}`}
+          </span>
+        )}
+      </span>
       {clock && <TurnClock clock={clock} label={clockLabel} size={34} />}
-      <span className="dir">{view.direction === 1 ? '↻' : '↺'}</span>
       {view.activeColor && (
         <span className="active-color-tag" title="The colour in play right now">
           <span

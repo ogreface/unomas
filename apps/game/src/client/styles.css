@@ -416,8 +416,25 @@ input {
   align-items: center;
   gap: 10px;
 }
-.turn-label {
+.turn-status {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.turn-label {
+  font-weight: 700;
+}
+.turn-next {
+  font-size: 12px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-next--you {
+  color: var(--accent);
   font-weight: 700;
 }
 .side-badge {
@@ -453,9 +470,6 @@ input {
   height: 6px;
   border-radius: 50%;
 }
-.dir {
-  font-size: 20px;
-}
 .active-color {
   display: inline-block;
   width: 16px;
@@ -473,31 +487,114 @@ input {
   color: var(--ink-dim);
 }
 
-.opponents {
+/*
+ * The turn order: every seat, chevrons between them pointing the way play goes. The row is a scroll
+ * container, which clips vertically as well as horizontally — hence the top padding, which is the
+ * headroom the "next" tag pokes up into.
+ */
+.order {
+  position: relative; /* the slots' offsetParent, which the scroll-to-turn arithmetic measures from */
   display: flex;
-  gap: 8px;
+  align-items: stretch;
+  gap: 3px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 10px 2px 4px;
+  scroll-behavior: smooth;
 }
-.opponent {
+.order__slot {
   flex: 0 0 auto;
+  display: flex;
+}
+.order__slot > * {
+  flex: 1;
+}
+.chevron {
+  flex: 0 0 auto;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  color: var(--ink-dim);
+  opacity: 0.45;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+/* A reverse turns every chevron round — animated, so the moment play changes direction is seen. */
+.chevron svg {
+  display: block;
+  transition: transform 0.4s ease;
+}
+.order[data-dir='down'] .chevron svg {
+  transform: scaleX(-1);
+}
+/* The ends of the row are where play wraps round to the other end: quieter than the rest. */
+.chevron--end {
+  opacity: 0.25;
+}
+/* The step being played right now: from the seat on turn to the seat being played on. */
+.chevron--lit {
+  color: var(--accent);
+  opacity: 1;
+  filter: drop-shadow(0 0 4px var(--accent-soft));
+}
+@media (prefers-reduced-motion: reduce) {
+  .order {
+    scroll-behavior: auto;
+  }
+  .chevron svg {
+    transition: none;
+  }
+}
+.next-flag {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -55%);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  white-space: nowrap;
+}
+
+.seat {
+  position: relative;
   background: rgba(255, 255, 255, 0.055);
   border: 1px solid var(--edge);
   border-radius: 12px;
   padding: 8px;
   min-width: 120px;
 }
-.opponent--turn {
+/* Your own seat carries no cards (you may not see your own backs), so it is a slim tile. */
+.seat--you {
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.seat--turn {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
-.opponent__head {
+.seat--next {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+.seat__head {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-bottom: 6px;
 }
-.opponent__name {
+.seat--you .seat__head:last-child {
+  margin-bottom: 0;
+}
+.seat__name {
   font-weight: 600;
   font-size: 13px;
   max-width: 70px;
@@ -505,7 +602,7 @@ input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.opponent__count {
+.seat__count {
   margin-left: auto;
   font-weight: 800;
   background: rgba(0, 0, 0, 0.35);
@@ -513,7 +610,7 @@ input {
   padding: 1px 8px;
   font-size: 12px;
 }
-.opponent__hand {
+.seat__hand {
   display: flex;
   align-items: center;
 }
@@ -829,12 +926,17 @@ input {
   font-size: 24px;
 }
 .table-players {
-  display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin: 18px 0;
+  row-gap: 14px;
+  column-gap: 6px;
+  margin: 8px 0 18px;
+}
+.table-players .chevron svg {
+  width: 14px;
+  height: 22px;
 }
 .table-player {
+  position: relative;
   background: rgba(255, 255, 255, 0.055);
   border: 1px solid var(--edge);
   border-radius: 14px;
@@ -843,6 +945,13 @@ input {
 .table-player--turn {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.table-player--next {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+.table-players .next-flag {
+  font-size: 12px;
 }
 .table-player__head {
   display: flex;
