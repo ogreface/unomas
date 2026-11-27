@@ -425,7 +425,7 @@ function doPlay(
   // A wild re-sets this via its `setColor` effect a few lines below.
   state.declaredColor = null
 
-  events.push({ t: 'cardPlayed', player: player.id, card: cardId, declaredColor: declared })
+  events.push({ t: 'cardPlayed', player: player.id, card: cardId, side: state.side, declaredColor: declared })
 
   // "Play your next-to-last card → yell UNO." The window opens the instant the hand hits one, and
   // stays open even while the game blocks on a colour choice or a challenge.

@@ -136,5 +136,5 @@ that screen is missing — so a phone that refreshes, reconnects or rides out a 
 whole game. A game already under way when the log shipped has its opening rebuilt, once, by
 replaying the action log, and the result is kept only if it lands on exactly the stored game.
 
-**240 unit/integration tests + 7 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+**242 unit/integration tests + 7 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
 Still to come in Stage 2: sound, reconnection grace, house-rule toggles, and the full a11y pass.

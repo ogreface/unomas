@@ -208,7 +208,11 @@ export type ActionType = Action['type']
 export type GameEvent =
   | { t: 'roundStarted'; round: number; dealer: PlayerId; starter: PlayerId; opening: CardId }
   | { t: 'handsDealt'; count: number }
-  | { t: 'cardPlayed'; player: PlayerId; card: CardId; declaredColor: Color | null }
+  /**
+   * `side` is the side the card was played on. It cannot be read back off the state afterwards: a
+   * Flip turns the whole table over in the same action, and its other face is a different card.
+   */
+  | { t: 'cardPlayed'; player: PlayerId; card: CardId; side: Side; declaredColor: Color | null }
   | { t: 'cardsDrawn'; player: PlayerId; count: number; cards: CardId[] }
   | { t: 'passed'; player: PlayerId }
   /** The clock ran out; the events that follow are the forfeit the engine took on their behalf. */
