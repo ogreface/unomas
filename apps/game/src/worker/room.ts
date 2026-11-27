@@ -60,6 +60,7 @@ import type {
   BotDifficulty,
   BotIntent,
   Color,
+  EventView,
   GameEvent,
   GameState,
   PhaseName,
@@ -229,6 +230,15 @@ export class GameRoom extends DurableObject<Env> {
         seq INTEGER PRIMARY KEY,
         action TEXT NOT NULL,
         ts INTEGER NOT NULL
+      );
+      -- The game log: every event, in the form the whole table may see (GameLog, in the protocol).
+      -- Written as each action lands, because that is the only moment it can be redacted: card keys
+      -- are per-round aliases, so a later snapshot cannot stand in for an earlier round's state.
+      CREATE TABLE IF NOT EXISTS events (
+        seq INTEGER NOT NULL,
+        idx INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        PRIMARY KEY (seq, idx)
       );
       CREATE TABLE IF NOT EXISTS snapshot (
         id INTEGER PRIMARY KEY CHECK (id = 0),
@@ -474,7 +484,7 @@ export class GameRoom extends DurableObject<Env> {
         this.#send(ws, { t: 'error', code: next.code, message: next.message, fatal: false })
         return
       }
-      this.#persist(next.state, { type: 'startRound' })
+      this.#persist(next.state, { type: 'startRound' }, next.events)
       await this.#rearm(next.state, { type: 'startRound' })
       this.#broadcast(next.state, next.events)
       return
@@ -503,7 +513,7 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     this.sql.exec('UPDATE room SET started = 1 WHERE id = 0')
-    this.#persist(started.state, { type: 'startRound' })
+    this.#persist(started.state, { type: 'startRound' }, started.events)
     // The deal can hand the first turn straight to a bot, or start a human's clock, so arming is
     // not only a post-action concern.
     await this.#rearm(started.state, { type: 'startRound' })
@@ -702,7 +712,7 @@ export class GameRoom extends DurableObject<Env> {
     const result = await ruleHost.reduce(state, built.action)
     if (!result.ok) return false
 
-    this.#persist(result.state, built.action)
+    this.#persist(result.state, built.action, result.events)
     await this.#rearm(result.state, built.action)
     this.#broadcast(result.state, result.events)
     return true
@@ -766,7 +776,7 @@ export class GameRoom extends DurableObject<Env> {
       return
     }
 
-    this.#persist(result.state, built.action)
+    this.#persist(result.state, built.action, result.events)
     // Arm before broadcasting: the frames carry the time remaining, so the clock has to be the new
     // one by the time they are built.
     await this.#rearm(result.state, built.action)
@@ -938,7 +948,7 @@ export class GameRoom extends DurableObject<Env> {
       return true
     }
 
-    this.#persist(result.state, action)
+    this.#persist(result.state, action, result.events)
     await this.#rearm(result.state, action)
     this.#broadcast(result.state, result.events)
     return true
@@ -1057,10 +1067,11 @@ export class GameRoom extends DurableObject<Env> {
       return
     }
     const timer = this.#timerView()
+    const log = this.#log()
     if (att.role === 'spectator') {
-      this.#send(ws, { t: 'tableSync', table: tableView(snap.state), timer })
+      this.#send(ws, { t: 'tableSync', table: tableView(snap.state), timer, log })
     } else {
-      this.#send(ws, { t: 'sync', view: viewFor(snap.state, att.playerId), timer })
+      this.#send(ws, { t: 'sync', view: viewFor(snap.state, att.playerId), timer, log })
     }
   }
 
@@ -1076,7 +1087,7 @@ export class GameRoom extends DurableObject<Env> {
   // Storage helpers — always read fresh; never cache game state in a field
   // -------------------------------------------------------------------------------------------
 
-  #persist(state: GameState, action: Action): void {
+  #persist(state: GameState, action: Action, events: GameEvent[]): void {
     this.sql.exec(
       'INSERT OR REPLACE INTO snapshot (id, seq, state) VALUES (0, ?, ?)',
       state.seq,
@@ -1088,6 +1099,24 @@ export class GameRoom extends DurableObject<Env> {
       JSON.stringify(action),
       Date.now(),
     )
+    // Redacted for the spectator, which is exactly "what everyone may see" — one list that is safe
+    // to replay to any recipient, the projector included.
+    redactEvents(state, events, SPECTATOR_RECIPIENT).forEach((event, idx) => {
+      this.sql.exec(
+        'INSERT OR IGNORE INTO events (seq, idx, event) VALUES (?, ?, ?)',
+        state.seq,
+        idx,
+        JSON.stringify(event),
+      )
+    })
+  }
+
+  /** The whole game log, oldest first. */
+  #log(): EventView[] {
+    return this.sql
+      .exec('SELECT event FROM events ORDER BY seq, idx')
+      .toArray()
+      .map(row => JSON.parse(row.event as string) as EventView)
   }
 
   #snapshot(): { seq: number; state: GameState } | null {

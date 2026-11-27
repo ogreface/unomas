@@ -156,6 +156,49 @@ test('the table view projects a live game without leaking a hand', async ({ brow
   await table.close()
 })
 
+test('the game log holds the whole game, and comes back whole after a reload', async ({ browser }) => {
+  const ctxA = await browser.newContext()
+  const ctxB = await browser.newContext()
+  const a = await ctxA.newPage()
+  const b = await ctxB.newPage()
+
+  const code = await createRoom(a, 'Ann')
+  await joinRoom(b, 'Bo', code)
+  await expect(a.locator('.roster li')).toHaveCount(2)
+  await a.getByRole('button', { name: /Start game/ }).click()
+  await expect(a.locator('.board')).toBeVisible()
+  await expect(b.locator('.board')).toBeVisible()
+
+  // A few moves, so there is more to the game than the deal.
+  for (let moves = 0, i = 0; moves < 4 && i < 40; i++) {
+    if ((await act(a)) || (await act(b))) moves++
+    await a.waitForTimeout(150)
+  }
+
+  // Closed until somebody asks for it.
+  const log = b.getByRole('complementary', { name: 'Game log' })
+  const entries = log.locator('.log__entry')
+  await expect(log).toHaveCount(0)
+  await b.getByRole('button', { name: 'Log', exact: true }).click()
+  await expect(log).toBeVisible()
+  await expect(entries.first()).toContainText('Round 1')
+  const before = await entries.count()
+  expect(before).toBeGreaterThan(1)
+
+  // A reload is a fresh connection with nothing in memory, so the history has to come from the room.
+  await b.reload()
+  await expect(b.locator('.board')).toBeVisible()
+  await b.getByRole('button', { name: 'Log', exact: true }).click()
+  await expect(entries.first()).toContainText('Round 1')
+  expect(await entries.count()).toBeGreaterThanOrEqual(before)
+
+  await b.keyboard.press('Escape')
+  await expect(log).toHaveCount(0)
+
+  await ctxA.close()
+  await ctxB.close()
+})
+
 test('everyone watches the same countdown, and a player who vanishes does not stall the table', async ({
   browser,
 }) => {

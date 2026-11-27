@@ -32,6 +32,11 @@ export interface RoomState {
   /** Rolling window of recent events for callouts/animations. */
   feed: FeedEvent[]
   /**
+   * Every event of the game so far, oldest first — the game log drawer. Each snapshot replaces it
+   * with the server's copy, so a refresh or a reconnect loses nothing; live events append to it.
+   */
+  log: EventView[]
+  /**
    * The turn clock, anchored to this device the moment it arrived. Null when nobody is on the clock.
    * Every screen in the room is counting down the same server-issued window.
    */
@@ -68,6 +73,7 @@ export function useRoom(opts: {
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [fatal, setFatal] = useState<{ code: string; message: string } | null>(null)
   const [feed, setFeed] = useState<FeedEvent[]>([])
+  const [log, setLog] = useState<EventView[]>([])
   const [timer, setTimer] = useState<AnchoredTimer | null>(null)
   const [bots, setBots] = useState<Set<string>>(() => new Set())
 
@@ -82,6 +88,7 @@ export function useRoom(opts: {
       for (const event of events) next.push({ id: feedIdRef.current++, event })
       return next.slice(-FEED_LIMIT)
     })
+    setLog(prev => [...prev, ...events])
   }, [])
 
   const onMessage = useCallback(
@@ -105,6 +112,7 @@ export function useRoom(opts: {
           // Anchored here, at the instant the frame landed, and never against a server timestamp —
           // see `lib/turnClock.ts`.
           setTimer(msg.timer ? anchorTimer(msg.timer) : null)
+          setLog(msg.log)
           lastSeqRef.current = msg.view.seq
           break
         case 'events':
@@ -118,6 +126,7 @@ export function useRoom(opts: {
         case 'tableSync':
           setTable(msg.table)
           setTimer(msg.timer ? anchorTimer(msg.timer) : null)
+          setLog(msg.log)
           lastSeqRef.current = msg.table.seq
           break
         case 'tableEvents':
@@ -180,6 +189,7 @@ export function useRoom(opts: {
     error,
     fatal,
     feed,
+    log,
     timer,
     bots,
     send,

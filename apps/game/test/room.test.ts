@@ -2,7 +2,7 @@ import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'c
 import { describe, expect, it } from 'vitest'
 import { CARDS_BY_ID, assertCardConservation, decideBot, seedRng, viewFor } from '@flipside/engine'
 import { BOT_CLIENT_PREFIX } from '@flipside/protocol'
-import type { GameState } from '@flipside/engine'
+import type { EventView, GameState } from '@flipside/engine'
 import { Client, autoMove, owes, stubFor, takeTurn } from './helpers.js'
 
 /** Create the room, seat two players, and return their live clients. */
@@ -257,6 +257,52 @@ describe('GameRoom — spectators', () => {
     expect(welcome.role).toBe('spectator')
     const tableSync = await s.waitFor('tableSync')
     expect(tableSync.table.players).toHaveLength(2)
+  })
+})
+
+/** An event as anyone at the table may see it: what was private to one recipient, emptied. */
+function publicOnly(event: EventView): EventView {
+  if (event.t === 'cardsDrawn') return { ...event, cards: [] }
+  if (event.t === 'challenged') return { ...event, revealed: [] }
+  return event
+}
+
+describe('GameRoom — game log', () => {
+  /** Play until somebody has drawn, so the log is known to hold an event with a private half. */
+  async function playUntilADraw(a: Client, b: Client): Promise<void> {
+    for (let i = 0; i < 60 && !a.events.some(e => e.t === 'cardsDrawn' && e.count > 0); i++) {
+      if (!(await autoMove([a, b]))) break
+    }
+    expect(a.events.some(e => e.t === 'cardsDrawn')).toBe(true)
+  }
+
+  it('hands a rejoining player every event of the game so far, with nothing private in it', async () => {
+    const { stub, a, b } = await seatTwo('GLOG')
+    await startGame(a, b)
+    await playUntilADraw(a, b)
+
+    // From storage, not memory: the history must outlive the object that wrote it.
+    await evictDurableObject(stub)
+
+    const a2 = await Client.connect(stub, 'GLOG')
+    a2.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
+    const sync = await a2.waitFor('sync')
+
+    // Exactly what Ann's first screen narrated, in order — minus the cards only Ann was shown.
+    // A draw stays "Ann drew 2", never which two.
+    expect(sync.log).toEqual(a.events.map(publicOnly))
+    expect(sync.log.length).toBeGreaterThan(0)
+  })
+
+  it('gives a projector that arrives mid-game the same history', async () => {
+    const { stub, a, b } = await seatTwo('GLOG2')
+    await startGame(a, b)
+    await playUntilADraw(a, b)
+
+    const s = await Client.connect(stub, 'GLOG2')
+    s.send({ t: 'join', clientId: 'client-s', nickname: 'Screen', role: 'spectator' })
+    const tableSync = await s.waitFor('tableSync')
+    expect(tableSync.log).toEqual(a.events.map(publicOnly))
   })
 })
 

@@ -254,11 +254,22 @@ export interface WelcomeMessage {
   bots: PlayerId[]
 }
 
+/**
+ * Every event of the game so far, oldest first, as **anyone at the table** may see it — the private
+ * halves of an event (which cards a draw handed you, the hand a challenge revealed) are emptied, so
+ * it is the same list for every recipient and safe to hand the projector. It rides on each snapshot
+ * so the game log on a phone that refreshed, reconnected or came back after a deploy is still the
+ * whole game, not just what that screen happened to be awake for. A room holds a single game, so
+ * the list is bounded by one game's length.
+ */
+export type GameLog = EventView[]
+
 /** Full authoritative snapshot for a player (join, resync, or after a deploy). */
 export interface SyncMessage {
   t: 'sync'
   view: PlayerView
   timer: TimerView | null
+  log: GameLog
 }
 
 /** Animation script + resulting authoritative snapshot, for a player. One per accepted action. */
@@ -274,6 +285,7 @@ export interface TableSyncMessage {
   t: 'tableSync'
   table: TableView
   timer: TimerView | null
+  log: GameLog
 }
 
 /** Animation script + resulting table snapshot, for a spectator. */

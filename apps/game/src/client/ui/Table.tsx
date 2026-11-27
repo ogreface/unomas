@@ -1,7 +1,9 @@
+import { useCallback, useState } from 'react'
 import { otherSide } from '@flipside/engine'
 import { useRoom } from '../net/useRoom.js'
 import { Card } from './Card.js'
 import { Feed } from './Feed.js'
+import { GameLog, GameLogToggle } from './GameLog.js'
 import { SideBadge } from './SideBadge.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
 
@@ -15,6 +17,8 @@ export function Table({ code }: { code: string }) {
   const table = room.table
   const nameOf = (id: string) => table?.players.find(p => p.id === id)?.name ?? '—'
   const clock = useTurnClock(room.timer)
+  const [logOpen, setLogOpen] = useState(false)
+  const closeLog = useCallback(() => setLogOpen(false), [])
 
   if (!table) {
     return (
@@ -52,6 +56,7 @@ export function Table({ code }: { code: string }) {
             <span className="table-clock__who">{nameOf(clock.timer.player)} to move</span>
           </span>
         )}
+        <GameLogToggle open={logOpen} onToggle={() => setLogOpen(open => !open)} />
       </header>
 
       <section className="table-players">
@@ -92,6 +97,7 @@ export function Table({ code }: { code: string }) {
       </section>
 
       <Feed feed={room.feed} nameOf={nameOf} />
+      {logOpen && <GameLog log={room.log} nameOf={nameOf} onClose={closeLog} />}
     </main>
   )
 }

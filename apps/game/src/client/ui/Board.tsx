@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { CardView, Color, PlayerView } from '@flipside/engine'
 import { SideBadge } from './SideBadge.js'
 import type { RoomState } from '../net/useRoom.js'
@@ -8,12 +8,15 @@ import { Players } from './Players.js'
 import { Hand } from './Hand.js'
 import { ColorPicker } from './ColorPicker.js'
 import { Feed } from './Feed.js'
+import { GameLog, GameLogToggle } from './GameLog.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
 import type { ClockReading } from './TurnClock.js'
 
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
   const [pendingWild, setPendingWild] = useState<CardView | null>(null)
+  const [logOpen, setLogOpen] = useState(false)
+  const closeLog = useCallback(() => setLogOpen(false), [])
   // One ticking clock per screen, read once and handed down — see `TurnClock.tsx`.
   const clock = useTurnClock(room.timer)
 
@@ -53,6 +56,8 @@ export function Board({ room }: { room: RoomState }) {
         clock={clock}
         thinking={view.turn !== null && room.bots.has(view.turn)}
         onLeave={() => navigate('/')}
+        logOpen={logOpen}
+        onToggleLog={() => setLogOpen(open => !open)}
       />
 
       <Players
@@ -78,6 +83,7 @@ export function Board({ room }: { room: RoomState }) {
       />
 
       <Feed feed={room.feed} nameOf={nameOf} />
+      {logOpen && <GameLog log={room.log} nameOf={nameOf} onClose={closeLog} />}
 
       <div className="action-bar">
         {phase.t === 'awaitingChallenge' && phase.challenger === view.you && (
@@ -163,6 +169,8 @@ function TopBar({
   clock,
   thinking,
   onLeave,
+  logOpen,
+  onToggleLog,
 }: {
   view: PlayerView
   nameOf: (id: string) => string
@@ -171,6 +179,8 @@ function TopBar({
   /** The seat on turn is a computer player, so say so rather than looking like a stall. */
   thinking: boolean
   onLeave: () => void
+  logOpen: boolean
+  onToggleLog: () => void
 }) {
   const turnLabel =
     view.turn === null
@@ -203,6 +213,7 @@ function TopBar({
           {view.activeColor}
         </span>
       )}
+      <GameLogToggle open={logOpen} onToggle={onToggleLog} />
     </header>
   )
 }
