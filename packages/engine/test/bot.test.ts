@@ -397,6 +397,33 @@ describe('decideBot — tactics', () => {
     if (intent?.t !== 'play') throw new Error(`expected a play, got ${intent?.t}`)
     expect(cardIdForKey(g.state, intent.key)).toBe(red)
   })
+
+  it('reads the pressure off the next player still in the game, not off an empty seat', () => {
+    const d = new Deal()
+    const g = new Game({ players: 3 })
+    g.do({ type: 'startRound' })
+    const wildDraw = d.face('light', 'wildDraw2')
+    const red = d.face('light', 'red 9')
+    g.rig({
+      hands: {
+        p0: [wildDraw, red, ...d.filler(4, { notColor: 'red', notValue: 3 })],
+        p1: d.filler(5),
+        p2: d.filler(5),
+      },
+      discard: [d.face('light', 'red 3')],
+      turn: 'p0',
+      direction: 1, // so that p1's is the seat play reaches next
+      phase: { t: 'awaitingPlay' },
+      declaredColor: null,
+    })
+    // p1 walks out. Their seat now shows a hand of zero — which is not a player about to go out,
+    // and must not goad the bot into spending its Wild Draw Two on p2's comfortable five cards.
+    g.do({ type: 'drop', player: 'p1', reason: 'disconnected' })
+
+    const intent = ask(g.state, 'p0')
+    if (intent?.t !== 'play') throw new Error(`expected a play, got ${intent?.t}`)
+    expect(cardIdForKey(g.state, intent.key)).toBe(red)
+  })
 })
 
 describe('decideBot — a table of bots plays real games', () => {

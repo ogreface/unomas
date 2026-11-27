@@ -10,19 +10,28 @@
 import { playerToActInView } from '@flipside/engine'
 import type { Direction, PhaseView } from '@flipside/engine'
 
+/** A seat in the row. One whose player has been dropped from the game stays in it, marked. */
+interface Seat {
+  id: string
+  dropped?: string | null
+}
+
 /**
  * The player who plays after `turn`, walking `direction` around the seats (array order is seat
  * order). Null when nobody is on turn, or when there is nobody else to play on.
+ *
+ * The seat of a player who has left is passed over, exactly as the engine's own `seatAfter` passes
+ * over it: the tile is still in the row, but nobody plays on an empty chair.
  */
-export function nextInOrder(
-  players: readonly { id: string }[],
-  turn: string | null,
-  direction: Direction,
-): string | null {
+export function nextInOrder(players: readonly Seat[], turn: string | null, direction: Direction): string | null {
   const n = players.length
   const at = turn === null ? -1 : players.findIndex(p => p.id === turn)
-  if (at < 0 || n < 2) return null
-  return players[(((at + direction) % n) + n) % n]?.id ?? null
+  if (at < 0) return null
+  for (let step = 1; step < n; step++) {
+    const seat = players[(((at + direction * step) % n) + n) % n]
+    if (seat && !seat.dropped) return seat.id
+  }
+  return null
 }
 
 /**
@@ -33,7 +42,7 @@ export function nextInOrder(
  */
 export function upNext(table: {
   phase: PhaseView
-  players: readonly { id: string }[]
+  players: readonly Seat[]
   turn: string | null
   direction: Direction
 }): string | null {

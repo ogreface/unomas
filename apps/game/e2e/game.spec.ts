@@ -329,6 +329,92 @@ test('the player on move hears it: a chime as the turn arrives, then the clock r
   await ctxB.close()
 })
 
+test('a tab closed by accident and reopened inside ten seconds keeps its seat', async ({ browser }) => {
+  const ctxA = await browser.newContext()
+  const ctxB = await browser.newContext()
+  const a = await ctxA.newPage()
+  const b = await ctxB.newPage()
+
+  const code = await createRoom(a, 'Ann')
+  await joinRoom(b, 'Bo', code)
+  await expect(a.locator('.roster li')).toHaveCount(2)
+  await a.getByRole('button', { name: /Start game/ }).click()
+  await expect(b.locator('.board')).toBeVisible()
+  const dealt = await b.locator('.hand__slot').count()
+  expect(dealt).toBeGreaterThanOrEqual(7)
+
+  // Bo's tab is gone — and back a moment later, in the same browser, so with the same identity.
+  await b.close()
+  const reopened = await ctxB.newPage()
+  await reopened.goto(`/r/${code}`)
+  await expect(reopened.locator('.hand__slot')).toHaveCount(dealt)
+
+  // Wait out the whole dwell time, and then some. Coming back cancelled the hold rather than merely
+  // beating it: with two players, a drop here would have ended the game on the spot.
+  await a.waitForTimeout(12_000)
+  await expect(reopened.locator('.hand__slot')).toHaveCount(dealt)
+  await expect(reopened.locator('.out-banner')).toHaveCount(0)
+  await expect(a.locator('.toast--playerDropped')).toHaveCount(0)
+  await expect(a.locator('.seat--out')).toHaveCount(0)
+  await expect(a.locator('.endgame')).toHaveCount(0)
+
+  await ctxA.close()
+  await ctxB.close()
+})
+
+test('a player who closes their tab is dropped, and the table plays on without them', async ({ browser }) => {
+  const ctxA = await browser.newContext()
+  const ctxB = await browser.newContext()
+  const ctxC = await browser.newContext()
+  const a = await ctxA.newPage()
+  const b = await ctxB.newPage()
+  const c = await ctxC.newPage()
+
+  const code = await createRoom(a, 'Ann')
+  await joinRoom(b, 'Bo', code)
+  await joinRoom(c, 'Cy', code)
+  await expect(a.locator('.roster li')).toHaveCount(3)
+  await a.getByRole('button', { name: /Start game/ }).click()
+  for (const page of [a, b, c]) await expect(page.locator('.board')).toBeVisible()
+
+  // Cy closes the tab. Nothing is sent to say so: the browser simply lets go of the socket, which
+  // is all the server ever sees of somebody leaving. It holds the seat for a few seconds — a reload
+  // looks exactly the same — and then gives it up.
+  await c.close()
+
+  for (const page of [a, b]) {
+    await expect(page.locator('.toast--playerDropped')).toContainText('Cy left the game', { timeout: 30_000 })
+    // The seat is still on the board, marked, rather than the table silently rearranging itself.
+    await expect(page.locator('.seat--out')).toContainText('Cy')
+    await expect(page.locator('.seat--out .tag--out')).toHaveText('left')
+    await expect(page.locator('.seat')).toHaveCount(3)
+    // Whoever is up, the seat flagged as next is one that still has somebody in it.
+    await expect(page.locator('.seat--out.seat--next')).toHaveCount(0)
+  }
+  // Two players are left, so there is still a game.
+  await expect(a.locator('.endgame')).toHaveCount(0)
+  await expect(a.locator('.turn-label')).not.toContainText('Cy')
+
+  // Cy comes back — same browser, so the same seat — and is told plainly that it is too late. The
+  // board is there to watch; the hand is not.
+  const back = await ctxC.newPage()
+  await back.goto(`/r/${code}`)
+  await expect(back.locator('.out-banner')).toContainText('You were away too long')
+  await expect(back.locator('.hand')).toHaveCount(0)
+  await expect(back.locator('.seat')).toHaveCount(3)
+  await expect(back.locator('.seat--you.seat--out .tag--out')).toHaveText('left')
+
+  // Then Bo goes as well. One player left is not a game, so it is Ann's — and the screen says why,
+  // because nobody played a last card.
+  await ctxB.close()
+  await expect(a.locator('.endgame h2')).toContainText('Ann wins', { timeout: 30_000 })
+  await expect(a.locator('.endgame')).toContainText('Everyone else left the game.')
+  await expect(a.locator('.scores__out')).toHaveCount(2)
+
+  await ctxA.close()
+  await ctxC.close()
+})
+
 test('one human plays a real round against a computer player', async ({ page }) => {
   // Nothing drives the computer here: every one of its moves is the room waking itself on a real
   // alarm, after the real 900ms pacing delay. That is the point of this test and also why it is

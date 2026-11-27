@@ -76,14 +76,18 @@ export function Table({ code }: { code: string }) {
       >
         {p => (
           <div
-            className={`table-player${p.id === toAct ? ' table-player--turn' : ''}${p.id === next ? ' table-player--next' : ''}`}
+            className={`table-player${p.id === toAct ? ' table-player--turn' : ''}${p.id === next ? ' table-player--next' : ''}${p.dropped ? ' table-player--out' : ''}`}
           >
             {p.id === next && <NextFlag />}
             <div className="table-player__head">
               <span className="seat-dot" data-seat={p.seat} />
               <span className="table-player__name">{p.name}</span>
               <span className="table-player__score">{p.score}</span>
-              <span className="seat__count">{p.handCount}</span>
+              {p.dropped ? (
+                <span className="tag tag--out">left</span>
+              ) : (
+                <span className="seat__count">{p.handCount}</span>
+              )}
               {clock?.timer.player === p.id && <TurnClock clock={clock} label={p.name} size={32} />}
               {p.saidUno && <span className="tag tag--uno">UNO</span>}
             </div>

@@ -15,6 +15,10 @@ import { NextFlag, TurnOrder } from './TurnOrder.js'
  * Whoever the room is waiting on also wears the countdown, so "why has nothing happened for twenty
  * seconds" is answered on the tile of the person it is about. (Your own countdown sits beside "Your
  * turn" in the top bar.)
+ *
+ * A player who has left keeps their tile — greyed, and labelled — rather than vanishing from the
+ * row: the turn visibly skipping an empty chair is easier to follow than a table that has quietly
+ * rearranged itself, and their score is still a line on the scoreboard.
  */
 export function Players({
   players,
@@ -47,7 +51,16 @@ export function Players({
 }) {
   const inactive = otherSide(side)
   const seatClass = (p: PlayerSummaryView) =>
-    `seat${p.id === you ? ' seat--you' : ''}${p.id === toAct ? ' seat--turn' : ''}${p.id === next ? ' seat--next' : ''}`
+    `seat${p.id === you ? ' seat--you' : ''}${p.id === toAct ? ' seat--turn' : ''}${p.id === next ? ' seat--next' : ''}${p.dropped ? ' seat--out' : ''}`
+  /** Where a hand count would be: a player who has left holds nothing, so say that instead of "0". */
+  const holding = (p: PlayerSummaryView) =>
+    p.dropped ? (
+      <span className="tag tag--out" title={`${p.name} is no longer in this game`}>
+        left
+      </span>
+    ) : (
+      <span className="seat__count">{p.handCount}</span>
+    )
 
   return (
     <TurnOrder players={players} direction={direction} toAct={toAct} next={next} className="seats">
@@ -62,7 +75,7 @@ export function Players({
             <div className="seat__head">
               <span className="tag tag--you">you</span>
               {p.saidUno && <span className="tag tag--uno">UNO</span>}
-              <span className="seat__count">{p.handCount}</span>
+              {holding(p)}
             </div>
           </div>
         ) : (
@@ -76,7 +89,7 @@ export function Players({
                   bot
                 </span>
               )}
-              <span className="seat__count">{p.handCount}</span>
+              {holding(p)}
               {clock?.timer.player === p.id && <TurnClock clock={clock} label={p.name} size={28} />}
               {p.saidUno && <span className="tag tag--uno">UNO</span>}
               {unoWindow === p.id && (

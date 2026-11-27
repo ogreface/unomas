@@ -117,7 +117,8 @@ with parametric-SVG cards, the read-only table view for a screenshare, and an ev
 The Durable Object tests run in real `workerd` and include surviving eviction mid-game; a Playwright
 pair play a full round to completion through the actual UI.
 
-**Stage 2 has started — computer players and the turn clock, both done and green.** A pure
+**Stage 2 has started — computer players, the turn clock, and leaving the table, all done and
+green.** A pure
 `decideBot(PlayerView, rng)` policy in the engine, `addBot`/`removeBot` on the wire, and an
 alarm-driven driver in the `GameRoom`. Tables of bots play whole games to 500 in the engine tests; a
 lone human finishes a real round against one through the actual UI, and a bot takes its turn
@@ -128,6 +129,14 @@ server-held deadline (a Durable Object storage alarm, not a `setTimeout`), count
 screen at once — the top bar, the tile of the player it is about, and large on the projected table.
 When it runs out the game forfeits exactly that one decision: draw and pass rather than play a card
 for them. See [decisions #17](docs/decisions.md) for the ruling and `turnTimeoutMs` for the knob.
+
+And sometimes they are not coming back, so a player who has gone is dropped from the game rather
+than costing the table thirty seconds a lap: either they closed the tab — the room holds the seat
+for 10 seconds after their last connection closes, because a reload and a deploy look exactly the
+same — or the clock ran out on them three times in a row. Their cards are shuffled back into the
+draw pile, their seat stays on the board marked as empty and the turn passes over it, and the last
+player left wins. [Decisions #18](docs/decisions.md) has the ruling, including what happens to a
+wild draw whose player walks out before it is answered; `dropAfterTimeouts` is the knob.
 
 Each phone also makes a little noise at the moments that matter to its player: their turn arriving,
 anybody calling UNO, their own clock running out, and the end of the game — muted from the speaker
@@ -140,5 +149,5 @@ that screen is missing — so a phone that refreshes, reconnects or rides out a 
 whole game. A game already under way when the log shipped has its opening rebuilt, once, by
 replaying the action log, and the result is kept only if it lands on exactly the stored game.
 
-**310 unit/integration tests + 8 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
-Still to come in Stage 2: reconnection grace, house-rule toggles, and the full a11y pass.
+**388 unit/integration tests + 10 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+Still to come in Stage 2: house-rule toggles, and the full a11y pass.

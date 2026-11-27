@@ -16,6 +16,10 @@ import type { ClockReading } from './TurnClock.js'
 import { useSoundCues } from './useSoundCues.js'
 import { playCues, setSoundMuted, soundMuted } from '../lib/sound.js'
 import { upNext } from '../lib/turnOrder.js'
+import { droppedNotice } from '../lib/dropped.js'
+
+/** No computer players — what the top bar is told once the room has stopped them. */
+const NOBODY: Set<string> = new Set()
 
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
@@ -47,6 +51,13 @@ export function Board({ room }: { room: RoomState }) {
   // while holding two, or — if you forgot — as a rescue while your one-card window is still open,
   // before an opponent calls you out. Once you've said it, stop nagging.
   const saidUno = me?.saidUno ?? false
+  // Out of the game, but still at the table: the server goes on sending this seat its view, so a
+  // dropped player watches the rest of the game from where they were sitting. Every control below
+  // is already off for them — none of it is ever their turn — and this says why.
+  const out = me?.dropped ?? null
+  // The room stops its computer players once the last person has gone, so a table with only bots
+  // left in it is not "thinking" — it has stopped, and the screen should not pretend otherwise.
+  const tableEmpty = !view.players.some(p => !p.dropped && !room.bots.has(p.id))
   const unoRescue = view.unoWindow === view.you && me?.handCount === 1 && !saidUno
   const canCallUno = (myTurn && me?.handCount === 2 && !saidUno) || unoRescue
 
@@ -67,7 +78,8 @@ export function Board({ room }: { room: RoomState }) {
       <TopBar
         view={view}
         nameOf={nameOf}
-        bots={room.bots}
+        // The label says a computer player "is thinking…". Once the room has stopped them, it is not.
+        bots={tableEmpty ? NOBODY : room.bots}
         next={next}
         clock={clock}
         onLeave={() => navigate('/')}
@@ -143,13 +155,19 @@ export function Board({ room }: { room: RoomState }) {
         )}
       </div>
 
-      <Hand
-        cards={view.hand}
-        side={view.side}
-        legalPlays={view.legalPlays}
-        canPlay={canPlay}
-        onPlay={onPlay}
-      />
+      {out ? (
+        <div className="out-banner" role="status">
+          {droppedNotice(out, view.options.dropAfterTimeouts, { tableEmpty })}
+        </div>
+      ) : (
+        <Hand
+          cards={view.hand}
+          side={view.side}
+          legalPlays={view.legalPlays}
+          canPlay={canPlay}
+          onPlay={onPlay}
+        />
+      )}
 
       {pendingWild && (
         <Overlay onClose={() => setPendingWild(null)}>
@@ -172,6 +190,10 @@ export function Board({ room }: { room: RoomState }) {
         <Overlay>
           <div className="endgame">
             <h2>{nameOf(phase.winner)} wins! 🎉</h2>
+            {/* A win by default looks like a bug unless it is named: no last card went down. */}
+            {view.players.every(p => p.id === phase.winner || p.dropped) && (
+              <p className="muted">Everyone else left the game.</p>
+            )}
             <ScoreTable view={view} nameOf={nameOf} />
             <button className="btn btn--primary" onClick={() => navigate('/')}>
               New game
@@ -304,8 +326,11 @@ function ScoreTable({ view, nameOf }: { view: PlayerView; nameOf: (id: string) =
     <table className="scores">
       <tbody>
         {rows.map(p => (
-          <tr key={p.id}>
-            <td>{nameOf(p.id)}</td>
+          <tr key={p.id} className={p.dropped ? 'scores__out' : undefined}>
+            <td>
+              {nameOf(p.id)}
+              {p.dropped && <span className="tag tag--out">left</span>}
+            </td>
             <td className="score-num">{p.score}</td>
           </tr>
         ))}

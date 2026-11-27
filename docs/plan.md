@@ -211,9 +211,10 @@ production-only bugs.
 
 ## Stage 2 — Feel
 
-~~Turn timers~~ · ✅ **sound** · spectators · reconnection grace · house-rule toggles (stacking, 7-0,
-draw-to-match, jump-in) · ✅ **computer players** · ✅ **turn clock** · animation polish · full a11y
-pass (every card is a `<button>`; the whole game is keyboard- and screen-reader-playable).
+~~Turn timers~~ · ✅ **sound** · spectators · ~~reconnection grace~~ · house-rule toggles (stacking,
+7-0, draw-to-match, jump-in) · ✅ **computer players** · ✅ **turn clock** · ✅ **leaving the table** ·
+animation polish · full a11y pass (every card is a `<button>`; the whole game is keyboard- and
+screen-reader-playable).
 
 ### 2.1 Computer players — done
 
@@ -279,6 +280,29 @@ sooner), and a cue that cannot play when it happens is dropped rather than queue
 from the background never plays a burst of stale chimes. A speaker button on the top bar mutes it,
 remembered per device. The projected table view is silent: it is a picture for the call, and its
 audio would double everybody's own.
+
+### 2.4 Leaving the table — done
+
+The turn clock stops one absent player from stalling a table; it does not stop them costing it
+thirty seconds a lap for the rest of the evening. So a player who has gone is dropped from the game
+— [decisions #18](decisions.md) is the ruling, including what becomes of their hand, their seat,
+and any decision the game was waiting on them for.
+
+| Concern | Where |
+|---|---|
+| Noticing a closed tab | `webSocketClose` on the player's **last** socket starts a 10-second hold, in the `absences` table. Not dropped on the close itself: a reload and a deploy look identical, and both are back inside the window |
+| Giving the seat up | The room's one alarm, now with three errands. `#armAt` is the single place the alarm is set, so that is where the earliest hold is weighed in — no caller has to remember it |
+| Three strikes | Engine state (`Player.timeouts`), counted and acted on inside the `timeout` reduction. The room does nothing extra for it |
+| What a drop does | `dropPlayer` in the reducer. The seat keeps its index and is *skipped* (`seatAfter` / `nextSeatInPlay`) rather than removed, so `turn`, `dealer` and a suspended `TurnResume` never go stale |
+| The host | `#handOffHost`, after any reduction that dropped somebody; a `host` frame tells every screen |
+
+Two details that are load-bearing:
+
+- **A drop is not a new decision for anyone else.** `#updateClock` treats it like an UNO call: the
+  player who was already deciding keeps the deadline they had. Only if the dropped player *was* the
+  one on the clock does the next player get a fresh window.
+- **Bots stop when the last person leaves.** Otherwise two of them are, to the engine, a legal game,
+  and the room would wake itself every 900ms to play it to nobody.
 
 ---
 

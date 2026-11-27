@@ -37,6 +37,29 @@ describe('nextInOrder', () => {
     expect(nextInOrder(seats, 'ghost', 1)).toBeNull()
     expect(nextInOrder([{ id: 'ann' }], 'ann', 1)).toBeNull()
   })
+
+  it('passes over the seat of a player who has left the game, in either direction', () => {
+    // Bo's seat stays in the row — it is still a name on the board — but nobody plays on it.
+    const gone = [{ id: 'ann' }, { id: 'bo', dropped: 'disconnected' as const }, { id: 'cy' }, { id: 'di' }]
+    expect(nextInOrder(gone, 'ann', 1)).toBe('cy')
+    expect(nextInOrder(gone, 'cy', -1)).toBe('ann')
+  })
+
+  it('passes over several empty seats in a row, and round the end of the row', () => {
+    const gone = [
+      { id: 'ann', dropped: 'timeouts' as const },
+      { id: 'bo' },
+      { id: 'cy' },
+      { id: 'di', dropped: 'disconnected' as const },
+    ]
+    expect(nextInOrder(gone, 'cy', 1)).toBe('bo')
+    expect(nextInOrder(gone, 'bo', -1)).toBe('cy')
+  })
+
+  it('is nobody when everyone else has left', () => {
+    const alone = [{ id: 'ann' }, { id: 'bo', dropped: 'disconnected' as const }]
+    expect(nextInOrder(alone, 'ann', 1)).toBeNull()
+  })
 })
 
 describe('upNext', () => {
@@ -64,6 +87,11 @@ describe('upNext', () => {
       resume,
     }
     expect(upNext(table(challenge))).toBe('di')
+  })
+
+  it('flags the next player still in the game, not an empty seat', () => {
+    const players = [{ id: 'ann' }, { id: 'bo' }, { id: 'cy', dropped: 'disconnected' as const }, { id: 'di' }]
+    expect(upNext({ phase: { t: 'awaitingPlay' }, players, turn: 'bo', direction: 1 })).toBe('di')
   })
 
   it('names nobody between rounds, when there is no turn to follow', () => {

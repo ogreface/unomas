@@ -305,6 +305,20 @@ input {
   color: var(--ink-dim);
   letter-spacing: 0.04em;
 }
+/* A player who is out of the game: still a name on the table and the scoreboard, no longer a seat. */
+.tag--out {
+  background: transparent;
+  border: 1px solid var(--edge);
+  color: var(--ink-dim);
+}
+.scores .tag--out {
+  margin-left: 8px;
+}
+.seat--out,
+.table-player--out,
+.scores__out {
+  opacity: 0.5;
+}
 
 /* ── seating a computer player ────────────────────────────────────────────────────────────── */
 .add-bot {
@@ -701,6 +715,18 @@ input {
 }
 .prompt--warn {
   color: var(--warn);
+}
+
+/* Where the hand was, for a player who has been dropped: the board stays, the cards do not. */
+.out-banner {
+  margin: auto 12px 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--ink-dim);
+  text-align: center;
+  font-weight: 600;
 }
 
 .hand {

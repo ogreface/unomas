@@ -110,6 +110,10 @@ export function useRoom(opts: {
           setTimer(null) // nobody is on the clock in the lobby
           setBots(new Set(msg.players.filter(p => p.bot !== null).map(p => p.id)))
           break
+        case 'host':
+          // Mid-game there is no roster to carry this, and the new host needs their Deal button.
+          setHost(msg.host)
+          break
         case 'sync':
           setView(msg.view)
           setRoster(null)

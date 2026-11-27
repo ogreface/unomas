@@ -28,7 +28,28 @@ export interface Player {
   score: number
   /** Set by `callUno`; cleared whenever the hand grows back past one card. */
   saidUno: boolean
+  /**
+   * How many decisions in a row the clock has had to forfeit for this player. Anything they do
+   * themselves clears it; reaching `options.dropAfterTimeouts` drops them from the game (D18).
+   */
+  timeouts: number
+  /**
+   * Why this player is out of the game, or null while they are in it (D18).
+   *
+   * A dropped player keeps their place in `players` — and with it their seat number, their name
+   * and their score — but holds no cards and is passed over by everything that walks the table:
+   * the turn, the deal, a Draw One's target. Keeping the row is what lets every seat *index* in
+   * the state (`turn`, `dealer`, a suspended `TurnResume`) stay valid when somebody walks out.
+   */
+  dropped: DropReason | null
 }
+
+/**
+ * How a player came to leave. `disconnected` is the closed tab; `timeouts` is the clock running
+ * out on them `dropAfterTimeouts` times in a row. Kept on the player so that their own screen can
+ * still say which it was after a reload.
+ */
+export type DropReason = 'disconnected' | 'timeouts'
 
 // ---------------------------------------------------------------------------------------------
 // Phases
@@ -107,6 +128,11 @@ export interface RuleOptions {
    * it is the Durable Object's, because the engine has no access to the time of day.
    */
   turnTimeoutMs: number
+  /**
+   * D18. How many decisions in a row the clock may forfeit for a player before it stops waiting
+   * for them and drops them from the game. 0 never drops anyone.
+   */
+  dropAfterTimeouts: number
 }
 
 export const DEFAULT_OPTIONS: RuleOptions = {
@@ -122,6 +148,7 @@ export const DEFAULT_OPTIONS: RuleOptions = {
   scoreLimit: 500,
   handSize: 7,
   turnTimeoutMs: 30_000,
+  dropAfterTimeouts: 3,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -194,6 +221,12 @@ export type Action =
    * client cannot ask for one. See `docs/decisions.md` #17 for what a forfeited decision does.
    */
   | { type: 'timeout'; player: PlayerId }
+  /**
+   * Take `player` out of the game. Server-generated only, like `timeout`: the Durable Object sends
+   * it when a player's last connection has stayed closed past its grace period. (The clock's own
+   * route to the same place — too many timeouts in a row — happens inside `timeout`.) See D18.
+   */
+  | { type: 'drop'; player: PlayerId; reason: DropReason }
 
 export type ActionType = Action['type']
 
@@ -215,8 +248,19 @@ export type GameEvent =
   | { t: 'cardPlayed'; player: PlayerId; card: CardId; side: Side; declaredColor: Color | null }
   | { t: 'cardsDrawn'; player: PlayerId; count: number; cards: CardId[] }
   | { t: 'passed'; player: PlayerId }
-  /** The clock ran out; the events that follow are the forfeit the engine took on their behalf. */
-  | { t: 'timedOut'; player: PlayerId; phase: PhaseName }
+  /**
+   * The clock ran out; the events that follow are the forfeit the engine took on their behalf.
+   * `strikes` is how many times in a row that has now happened to this player, and `limit` is the
+   * room's `dropAfterTimeouts` — so a client can say "2 of 3" without being sent the options.
+   */
+  | { t: 'timedOut'; player: PlayerId; phase: PhaseName; strikes: number; limit: number }
+  /** A player is out of the game. `cards` is how many of theirs went back into the draw pile. */
+  | { t: 'playerDropped'; player: PlayerId; reason: DropReason; cards: number }
+  /**
+   * The player who played a wild draw left before it was answered, so it is off: `challenger`
+   * neither draws nor loses the turn.
+   */
+  | { t: 'challengeVoided'; challenger: PlayerId }
   | { t: 'flipped'; side: Side; newTop: CardId }
   | { t: 'colorChosen'; player: PlayerId; color: Color }
   | { t: 'directionChanged'; direction: Direction }
@@ -321,6 +365,7 @@ export type RuleErrorCode =
   | 'uno_not_available'
   | 'callout_not_available'
   | 'game_over'
+  | 'not_in_game'
   | 'not_enough_players'
   | 'internal'
 

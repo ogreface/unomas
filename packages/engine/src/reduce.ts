@@ -18,6 +18,7 @@ import type {
   Card,
   CardId,
   Color,
+  DropReason,
   Face,
   GameEvent,
   GameState,
@@ -38,7 +39,9 @@ import {
   drawUntilColor,
   faceOn,
   newEffectCtx,
+  nextSeatInPlay,
   playerIndex,
+  playersInPlay,
   seatAfter,
   topCardId,
 } from './effects.js'
@@ -87,6 +90,8 @@ export function createGame(spec: CreateGameSpec): GameState {
       hand: [],
       score: 0,
       saidUno: false,
+      timeouts: 0,
+      dropped: null,
     })),
     turn: 0,
     direction: 1,
@@ -128,6 +133,7 @@ export function reduce(input: GameState, action: Action): ReduceResult {
   const cards = cardIndex(pack)
 
   const state = clone(input)
+  upgrade(state, pack)
   const events: GameEvent[] = []
   const windowAtStart = state.unoWindow
 
@@ -138,10 +144,32 @@ export function reduce(input: GameState, action: Action): ReduceResult {
     throw err
   }
 
+  // Doing anything at all is proof of life, so it wipes the count of turns the clock has had to
+  // take for this player (D18). Only an *accepted* action gets here: a rejected one changed nothing.
+  if ('player' in action && action.type !== 'timeout' && action.type !== 'drop') {
+    const actor = state.players.find(p => p.id === action.player)
+    if (actor) actor.timeouts = 0
+  }
+
   closeUnoWindow(state, action, windowAtStart)
   state.seq = input.seq + 1
 
   return { ok: true, state, events }
+}
+
+/**
+ * Bring a state written by an older build up to the shape this one expects.
+ *
+ * A room that is mid-game across a deploy hands us a snapshot with none of the fields added since
+ * it was dealt. Filling them in here — once, at the top of every reduction — is what keeps "the
+ * field is missing" from leaking into the rules as `undefined + 1`.
+ */
+function upgrade(state: GameState, pack: RulePack): void {
+  state.options = { ...DEFAULT_OPTIONS, ...pack.defaultOptions(), ...state.options }
+  for (const player of state.players) {
+    player.timeouts ??= 0
+    player.dropped ??= null
+  }
 }
 
 function dispatch(
@@ -151,6 +179,15 @@ function dispatch(
   cards: Record<CardId, Card>,
   events: GameEvent[],
 ): void {
+  // A player who has been dropped is out for good (D18): nothing they send, and nothing sent on
+  // their behalf, can touch the game again.
+  if ('player' in action) {
+    const actor = state.players.find(p => p.id === action.player)
+    if (actor?.dropped) {
+      throw new RuleError('not_in_game', `${actor.name} is no longer in this game`)
+    }
+  }
+
   switch (action.type) {
     case 'startRound':
       return startRound(state, pack, cards, events)
@@ -172,6 +209,8 @@ function dispatch(
       return doCallout(state, action.player, action.target, pack, cards, events)
     case 'timeout':
       return doTimeout(state, action.player, pack, cards, events)
+    case 'drop':
+      return doDrop(state, action.player, action.reason, pack, cards, events)
     default: {
       const never: never = action
       throw new RuleError('internal', `unknown action ${JSON.stringify(never)}`)
@@ -194,6 +233,7 @@ function closeUnoWindow(state: GameState, action: Action, windowAtStart: PlayerI
   const actor = 'player' in action ? action.player : null
   if (actor === windowAtStart) return // the owner's own action does not close their window
   if (action.type === 'callout') return // the callout handler owns the window
+  if (action.type === 'drop') return // somebody leaving is not somebody beginning their turn
 
   state.unoWindow = null
 }
@@ -214,9 +254,11 @@ function startRound(
   if (state.phase.t !== 'lobby' && state.phase.t !== 'roundOver') {
     throw new RuleError('wrong_phase', `cannot start a round from phase "${state.phase.t}"`)
   }
-  if (state.players.length < 2) {
+  if (playersInPlay(state) < 2) {
     throw new RuleError('not_enough_players', 'a game needs at least two players')
   }
+  // The deal cannot fall to somebody who has left; it moves on to the next seat that is occupied.
+  if (state.players[state.dealer]?.dropped) state.dealer = nextSeatInPlay(state, state.dealer, 1)
 
   const deck = pack.buildDeck().map(c => c.id)
   assignAliases(state, deck)
@@ -239,18 +281,21 @@ function startRound(
 
   // Deal from the dealer's left, one card at a time round the table — as you would by hand. The
   // order matters only because it must be *reproducible*, and dealing in rounds is what a replay
-  // of the seed will show.
-  const n = state.players.length
+  // of the seed will show. A seat whose player has left is simply not dealt to (D18).
+  const seats: number[] = []
+  for (let seat = state.dealer; seats.length < playersInPlay(state); ) {
+    seat = nextSeatInPlay(state, seat, 1)
+    seats.push(seat)
+  }
   for (let i = 0; i < state.options.handSize; i++) {
-    for (let k = 1; k <= n; k++) {
-      const seat = (state.dealer + k) % n
+    for (const seat of seats) {
       const id = state.drawPile.pop()
       if (id === undefined) throw new RuleError('internal', 'deck too small to deal')
       ;(state.players[seat] as Player).hand.push(id)
     }
   }
 
-  const starter = (state.dealer + 1) % n
+  const starter = seats[0] as number
   state.turn = starter
 
   const dealerId = (state.players[state.dealer] as Player).id
@@ -435,7 +480,9 @@ function doPlay(
   const effectCtx: PlayEffectContext = Object.freeze({
     ...ctxIn,
     player: player.id,
-    playerCount: state.players.length,
+    // The players still in the game. A table of three that has lost one is a two-player game, and
+    // the pack's two-player rulings (D6) apply to it from that moment.
+    playerCount: playersInPlay(state),
     declaredColor: declared,
   })
 
@@ -652,7 +699,17 @@ function doTimeout(
   // Captured, not read through `state.phase`: the handlers below *move* the phase, and narrowing it
   // here would tell TypeScript the "did the draw leave them a choice?" check can't be true.
   const phase: PhaseName = state.phase.t
-  events.push({ t: 'timedOut', player: player.id, phase })
+  const limit = state.options.dropAfterTimeouts
+  player.timeouts += 1
+  events.push({ t: 'timedOut', player: player.id, phase, strikes: player.timeouts, limit })
+
+  // D18. One timeout is a slow turn; this many in a row is an empty chair, and the table should
+  // not be made to wait out the clock for it on every lap from here to 500 points. The last strike
+  // *is* the drop: forfeiting first would draw a card only to shuffle it straight back into the
+  // deck, and `dropPlayer` settles whatever decision was outstanding in any case.
+  if (limit > 0 && player.timeouts >= limit) {
+    return dropPlayer(state, player, 'timeouts', pack, cards, events)
+  }
 
   switch (phase) {
     case 'awaitingPlay': {
@@ -664,15 +721,144 @@ function doTimeout(
     }
     case 'awaitingDrawnCardChoice':
       return doPass(state, playerId, pack, cards, events)
-    case 'awaitingColorChoice': {
-      const color = pack.colorsFor(state.side)[0]
-      if (color === undefined) throw new RuleError('internal', `pack offers no ${state.side} colours`)
-      return doChooseColor(state, playerId, color, pack, cards, events)
-    }
+    case 'awaitingColorChoice':
+      return doChooseColor(state, playerId, forfeitColor(state, pack), pack, cards, events)
     case 'awaitingChallenge':
       return doChallenge(state, playerId, false, pack, cards, events)
     default:
       throw new RuleError('wrong_phase', `cannot time out during "${phase}"`)
+  }
+}
+
+/** The colour named for a player who is not there to name one: the side's first, every time. */
+function forfeitColor(state: GameState, pack: RulePack): Color {
+  const color = pack.colorsFor(state.side)[0]
+  if (color === undefined) throw new RuleError('internal', `pack offers no ${state.side} colours`)
+  return color
+}
+
+// ---------------------------------------------------------------------------------------------
+// Leaving the table
+// ---------------------------------------------------------------------------------------------
+
+function doDrop(
+  state: GameState,
+  playerId: PlayerId,
+  reason: DropReason,
+  pack: RulePack,
+  cards: Record<CardId, Card>,
+  events: GameEvent[],
+): void {
+  if (state.phase.t === 'lobby') throw new RuleError('wrong_phase', 'the game has not started')
+  if (state.phase.t === 'gameOver') throw new RuleError('game_over', 'the game is already over')
+  dropPlayer(state, requirePlayer(state, playerId), reason, pack, cards, events)
+}
+
+/**
+ * Take a player out of the game for good (D18) — they closed the tab and did not come back, or
+ * the clock ran out on them once too often. The Durable Object decides *that* it happens; what it
+ * does to the game is a rule, so it lives here.
+ *
+ * Around a real table, somebody who gets up and leaves hands their cards back, and the game goes
+ * on without them. That is the whole of it:
+ *
+ * - **Their seat stays, empty.** The player keeps their row, name and score — flagged `dropped` —
+ *   and everything that walks the table passes over it (`seatAfter`, the deal, effect targets).
+ *   Nothing is renumbered, so no seat index anywhere in the state goes stale.
+ * - **Their hand is shuffled into the draw pile.** Shuffled, because the table has seen the back
+ *   of every one of those cards; and into the *draw* pile, because the discard pile's order is
+ *   what the next Flip turns over (D5) and nobody played these.
+ * - **Whatever the game was waiting on them for is settled without them**, each in the way that
+ *   costs the players still sitting there the least — see the cases below.
+ * - **The last player left wins the game.** No round is scored for it: nobody went out.
+ *
+ * It is final. A dropped player's later actions are refused at `dispatch`, and a new deal does
+ * not include them.
+ */
+function dropPlayer(
+  state: GameState,
+  player: Player,
+  reason: DropReason,
+  pack: RulePack,
+  cards: Record<CardId, Card>,
+  events: GameEvent[],
+): void {
+  const seat = player.seat
+
+  // A colour only they could name. Play cannot continue without one, so it is named for them
+  // exactly as the clock would have (D17) — and it has to happen *first*, while they still hold
+  // their cards, because resuming the turn they had suspended runs the ordinary win check, and to
+  // that check a player with an empty hand has just gone out.
+  if (state.phase.t === 'awaitingColorChoice' && state.phase.chooser === player.id) {
+    doChooseColor(state, player.id, forfeitColor(state, pack), pack, cards, events)
+  }
+
+  const returned = player.hand.length
+  if (returned > 0) {
+    const [pile, rng] = shuffle([...state.drawPile, ...player.hand], state.rng)
+    state.drawPile = pile
+    state.rng = rng
+  }
+  player.hand = []
+  player.saidUno = false
+  player.dropped = reason
+  if (state.unoWindow === player.id) state.unoWindow = null
+  events.push({ t: 'playerDropped', player: player.id, reason, cards: returned })
+
+  const remaining = state.players.filter(p => !p.dropped)
+  if (remaining.length < 2) {
+    const winner = remaining[0]
+    if (!winner) throw new RuleError('internal', 'the last player in the game cannot be dropped')
+    state.unoWindow = null
+    state.phase = { t: 'gameOver', winner: winner.id }
+    events.push({ t: 'gameEnded', winner: winner.id })
+    return
+  }
+
+  const phase = state.phase
+  switch (phase.t) {
+    case 'awaitingPlay':
+    case 'awaitingDrawnCardChoice': {
+      // Their turn, if it was theirs, just passes. Nothing is drawn for them on the way out.
+      if (state.turn !== seat) return
+      state.turn = seatAfter(state, seat, 1)
+      state.phase = { t: 'awaitingPlay' }
+      events.push({ t: 'turnChanged', player: (state.players[state.turn] as Player).id })
+      return
+    }
+
+    case 'awaitingChallenge': {
+      if (phase.challenger === player.id) {
+        // The target of a wild draw has gone, so there is nobody to draw. The play itself stands:
+        // settle it as the accused's ordinary turn, which moves on past the empty seat — or ends
+        // the round, if that wild draw was their last card.
+        const ctx = newEffectCtx(state, pack, cards, events, phase.resume.actor, phase.color)
+        ctx.extraSkips = phase.resume.extraSkips
+        ctx.forcedTurn = phase.resume.forcedTurn
+        settle(state, ctx, pack, cards, events, null)
+        return
+      }
+      if (phase.accused === player.id) {
+        // The player who *played* the wild draw has gone, and their hand with them — so nobody
+        // can ever show whether the play was a bluff. Letting the draw stand would take the
+        // challenge away from its target; letting them challenge would find an empty hand and
+        // call it innocent. Neither is fair to the one person still here, so the draw is off: the
+        // card stays on the pile in its declared colour, and its target simply takes their turn.
+        events.push({ t: 'challengeVoided', challenger: phase.challenger })
+        state.turn = phase.resume.forcedTurn ?? seatAfter(state, seat, 1 + phase.resume.extraSkips)
+        state.phase = { t: 'awaitingPlay' }
+        events.push({ t: 'turnChanged', player: (state.players[state.turn] as Player).id })
+      }
+      return
+    }
+
+    // Somebody else's colour to choose, or nothing in progress at all: the deal that follows a
+    // `roundOver` leaves the empty seat out by itself.
+    case 'awaitingColorChoice':
+    case 'roundOver':
+    case 'lobby':
+    case 'gameOver':
+      return
   }
 }
 
@@ -869,7 +1055,8 @@ function endRound(
   }
 
   state.phase = { t: 'roundOver', winner: winner.id, points }
-  state.dealer = (state.dealer + 1) % state.players.length
+  // The deal passes to the left — to the next player who is still here to take it.
+  state.dealer = nextSeatInPlay(state, state.dealer, 1)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -925,6 +1112,15 @@ export function assertStateInvariants(state: GameState): void {
 
   if (state.turn < 0 || state.turn >= state.players.length) {
     throw new Error(`turn ${state.turn} is out of range`)
+  }
+
+  // D18: a player who has left holds nothing, and the game is never left waiting on one.
+  for (const p of state.players) {
+    if (p.dropped && p.hand.length > 0) throw new Error(`${p.name} has left the game but still holds cards`)
+  }
+  const owed = playerToAct(state)
+  if (owed !== null && state.players.find(p => p.id === owed)?.dropped) {
+    throw new Error(`the game is waiting on "${owed}", who has left it`)
   }
 }
 

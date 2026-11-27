@@ -35,8 +35,18 @@
  * every screen, and — if the alarm beats the player to it — hands the engine a `timeout` action
  * that forfeits exactly that one decision. See `#updateClock` and `#forfeitIfExpired` below.
  *
- * A Durable Object has exactly **one** alarm and these are two errands for it, so `#rearm` arms it
- * for whichever is due first and `alarm()` runs whatever is actually due on arrival. Both errands
+ * ## Leaving
+ *
+ * Two things take a player out of a game for good (D18), and the room is where both are noticed:
+ * the clock running out on them several times in a row — which the engine counts, and acts on
+ * inside the same `timeout` action — and their last connection closing and *staying* closed. A
+ * closed socket is all the room ever sees of a closed tab, and it is also all it sees of a reload
+ * or a deploy, so the seat is held for a short grace period (`absences`, below) and the player is
+ * dropped only if nobody has reclaimed it by the end. Before the deal the same thing simply takes
+ * them off the roster.
+ *
+ * A Durable Object has exactly **one** alarm and these are three errands for it, so `#armAt` arms
+ * it for whichever is due first and `alarm()` runs whatever is actually due on arrival. All three
  * are idempotent, because alarm delivery is at-least-once and a hibernated object can be woken
  * early.
  */
@@ -112,6 +122,22 @@ const DEFAULT_BOT_DELAY_MS = 900
  * multiple of the base delay, so turning the pacing off for tests turns this off with it.
  */
 const BOT_CALLOUT_GRACE = 3
+
+/**
+ * How long a seat is held after its player's last connection closes.
+ *
+ * Nobody is dropped *on* the close, because the close cannot say why it happened: a closed tab, a
+ * reload, a phone walking through a dead spot and a deploy (which cuts every socket in the room at
+ * once) all look identical from here. So a closed tab gets a moment's dwell in case it was an
+ * accident: reopen the page inside it and the seat is still yours. A reload is back in a second or
+ * two, and after a cut the client's first two reconnect attempts land at roughly 3 and 7 seconds —
+ * both inside this — and rejoining cancels the hold. (Its third attempt, at about 12 seconds, does
+ * not: raise this before lengthening the client's back-off.)
+ *
+ * It is deliberately shorter than the turn clock: if the absent player is the one everybody is
+ * waiting on, the table should not wait *longer* for an empty chair than it would for a slow one.
+ */
+const DISCONNECT_GRACE_MS = 10_000
 
 /** Names for computer players. Handed out in order; a room of ten will not run out. */
 const BOT_NAMES = ['Byte', 'Circuit', 'Domino', 'Echo', 'Fable', 'Glitch', 'Hexa', 'Iris', 'Jinx']
@@ -309,6 +335,13 @@ export class GameRoom extends DurableObject<Env> {
         difficulty TEXT NOT NULL,
         rng TEXT NOT NULL
       );
+      -- Seats being held for players whose last connection has closed, and until when. One row per
+      -- absent player; rejoining deletes it. Stored for the same reason the turn clock is: the
+      -- object hibernates, and can be evicted, long before a grace period is up.
+      CREATE TABLE IF NOT EXISTS absences (
+        player_id TEXT PRIMARY KEY,
+        deadline INTEGER NOT NULL
+      );
     `)
   }
 
@@ -380,30 +413,32 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
-    this.#onSocketGone(ws)
+    await this.#onSocketGone(ws)
     ws.close(code, reason)
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
-    this.#onSocketGone(ws)
+    await this.#onSocketGone(ws)
   }
 
   /**
-   * A socket dropped. Mark the player away only if this was their *last* connection — a player may
-   * legitimately hold several (a phone and a laptop, or two tabs), and closing one must not evict
-   * them from the game.
+   * A socket dropped. Mark the player away — and start holding their seat — only if this was their
+   * *last* connection: a player may legitimately hold several (a phone and a laptop, or two tabs),
+   * and closing one of them is not leaving. Nor is a spectator's socket anybody's seat at all.
    */
-  #onSocketGone(ws: WebSocket): void {
+  async #onSocketGone(ws: WebSocket): Promise<void> {
     const att = ws.deserializeAttachment() as Attachment | null
     if (att?.role !== 'player') return
-    if (this.#hasOtherSocketFor(ws, att.playerId)) return
+    if (this.#hasSocketFor(att.playerId, ws)) return
     this.sql.exec('UPDATE players SET connected = 0 WHERE id = ?', att.playerId)
+    await this.#holdSeat(att.playerId)
     this.#broadcastRoster()
   }
 
-  #hasOtherSocketFor(exclude: WebSocket, playerId: string): boolean {
+  /** Does this player have a live connection — other than `except`, if one is on its way out? */
+  #hasSocketFor(playerId: string, except?: WebSocket): boolean {
     for (const other of this.ctx.getWebSockets()) {
-      if (other === exclude) continue
+      if (other === except) continue
       const att = other.deserializeAttachment() as Attachment | null
       if (att?.playerId === playerId) return true
     }
@@ -465,6 +500,9 @@ export class GameRoom extends DurableObject<Env> {
       }
       ws.serializeAttachment(att)
       this.sql.exec('UPDATE players SET connected = 1, name = ? WHERE id = ?', msg.nickname, existing.id)
+      // They are back, so the seat is no longer being held against a deadline. (The alarm armed for
+      // that deadline still comes round; it finds nothing due and re-arms for whatever is.)
+      this.sql.exec('DELETE FROM absences WHERE player_id = ?', existing.id)
       // Note: we do *not* close the player's other sockets. A player may hold several at once
       // (multiple devices/tabs); each is a valid mirror and all receive the same broadcasts.
       this.#sendWelcome(ws, att)
@@ -702,9 +740,15 @@ export class GameRoom extends DurableObject<Env> {
     await this.#armAt(this.#updateClock(state, action), this.#botWakeAt(state))
   }
 
-  /** The earliest of the times given, or no alarm at all if the room is waiting on nothing. */
+  /**
+   * The earliest of the times given, or no alarm at all if the room is waiting on nothing.
+   *
+   * Every arming of the alarm comes through here, which makes it the one place the third errand —
+   * a seat being held for somebody who has disconnected — has to be weighed in. Callers name the
+   * deadlines that come from the *game*; the ones that come from the sockets are added for them.
+   */
   async #armAt(...times: (number | null)[]): Promise<void> {
-    const due = times.filter((t): t is number => t !== null)
+    const due = [...times, this.#nextAbsenceAt()].filter((t): t is number => t !== null)
     if (due.length === 0) {
       await this.ctx.storage.deleteAlarm()
       return
@@ -728,6 +772,8 @@ export class GameRoom extends DurableObject<Env> {
    * rather than in a single burst.
    */
   async #takeBotTurn(state: GameState): Promise<boolean> {
+    if (!this.#anyoneHome(state)) return false
+
     for (const bot of this.#bots()) {
       if (!state.players.some(p => p.id === bot.player_id)) continue
 
@@ -781,6 +827,7 @@ export class GameRoom extends DurableObject<Env> {
   #botWakeIn(state: GameState): number | null {
     const bots = new Set(this.#bots().map(b => b.player_id))
     if (bots.size === 0) return null
+    if (!this.#anyoneHome(state)) return null
 
     const base = this.#botDelayMs()
     const owed = playerToAct(state)
@@ -802,6 +849,18 @@ export class GameRoom extends DurableObject<Env> {
     // Hold the whole turn back, not just the callout: a bot that plays first and pounces second
     // would give the same non-existent reaction window by another route.
     return humanIsExposed ? base * BOT_CALLOUT_GRACE : base
+  }
+
+  /**
+   * Is any *person* still playing this game?
+   *
+   * When the last of them has been dropped the computer players stop where they are. To the engine
+   * two bots are a perfectly good two-player game, and left to it they would play on to 500 points
+   * one alarm at a time, for an audience of nobody, keeping the object awake for all of it.
+   */
+  #anyoneHome(state: GameState): boolean {
+    const bots = new Set(this.#bots().map(b => b.player_id))
+    return state.players.some(p => !p.dropped && !bots.has(p.id))
   }
 
   #botDelayMs(): number {
@@ -888,9 +947,10 @@ export class GameRoom extends DurableObject<Env> {
    * properties matter:
    *
    * - **A new decision gets a full window; an unrelated action does not extend the old one.** An
-   *   opponent shouting UNO or calling someone out does not change whose decision it is, so those
-   *   leave the running deadline exactly where it was — otherwise a table could keep a player's
-   *   clock topped up indefinitely, or (worse) reset it every time anyone did anything.
+   *   opponent shouting UNO or calling someone out does not change whose decision it is, and nor
+   *   does somebody else being dropped from the game, so those leave the running deadline exactly
+   *   where it was — otherwise a table could keep a player's clock topped up indefinitely, or
+   *   (worse) reset it every time anyone did anything.
    * - **A running clock is kept, not restarted.** `null` (a reconnect, a resync, a stale wake)
    *   means "the current deadline still stands", never "start again".
    * - **A bot is never on the clock.** Its seat is *driven* — the alarm that matters there is the
@@ -906,9 +966,12 @@ export class GameRoom extends DurableObject<Env> {
       return null
     }
 
-    // `callUno` and `callout` are the only actions that can leave the same player owing the same
-    // decision afterwards. Every other action begins a new one.
-    const continuing = action === null || action.type === 'callUno' || action.type === 'callout'
+    // `callUno`, `callout` and a `drop` of somebody else are the only actions that can leave the
+    // same player owing the same decision afterwards. Every other action begins a new one. (A drop
+    // of the player who *was* on the clock moves the decision to somebody else, and the comparison
+    // below gives them a window of their own.)
+    const continuing =
+      action === null || action.type === 'callUno' || action.type === 'callout' || action.type === 'drop'
     const running = this.#clock()
     if (continuing && running && running.player === player && running.phase === state.phase.t) {
       return running.deadline
@@ -1003,7 +1066,126 @@ export class GameRoom extends DurableObject<Env> {
     this.#persist(result.state, action, result.events)
     await this.#rearm(result.state, action)
     this.#broadcast(result.state, result.events)
+    // One timeout too many drops the player (D18), and the player may have been the host.
+    this.#handOffHost(result.state)
     return true
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Leaving
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * Start holding a seat for a player whose last connection has just closed, and make sure the
+   * room wakes when the hold runs out.
+   *
+   * The alarm is only ever brought *forward* here. Whatever it was already armed for — a bot's
+   * move, a turn's deadline — is still due, and `alarm()` re-arms for the rest once it has dealt
+   * with whichever comes first.
+   */
+  async #holdSeat(playerId: string): Promise<void> {
+    if (!this.#isStillIn(playerId)) return
+
+    const deadline = Date.now() + DISCONNECT_GRACE_MS
+    this.sql.exec('INSERT OR REPLACE INTO absences (player_id, deadline) VALUES (?, ?)', playerId, deadline)
+    const armed = await this.ctx.storage.getAlarm()
+    if (armed === null || armed > deadline) await this.ctx.storage.setAlarm(deadline)
+  }
+
+  /** Is there anything left to drop this player from? Not once they are out, or the game is over. */
+  #isStillIn(playerId: string): boolean {
+    const snap = this.#snapshot()
+    if (!snap) return this.#players().some(p => p.id === playerId)
+    if (snap.state.phase.t === 'gameOver') return false
+    return snap.state.players.some(p => p.id === playerId && !p.dropped)
+  }
+
+  #nextAbsenceAt(): number | null {
+    const row = this.sql.exec('SELECT MIN(deadline) AS at FROM absences').toArray()[0] as
+      | { at: number | null }
+      | undefined
+    return row?.at ?? null
+  }
+
+  /**
+   * Stop holding the seat of everybody whose grace period has run out, and say whether that
+   * changed anything.
+   *
+   * Idempotent like the alarm's other errands: the row is deleted before the drop, an early wake
+   * finds no row past its deadline, and a duplicate one finds no row at all.
+   */
+  async #dropTheAbsent(): Promise<boolean> {
+    const due = this.sql
+      .exec('SELECT player_id FROM absences WHERE deadline <= ? ORDER BY deadline', Date.now())
+      .toArray() as unknown as Array<{ player_id: string }>
+
+    let acted = false
+    for (const { player_id: playerId } of due) {
+      this.sql.exec('DELETE FROM absences WHERE player_id = ?', playerId)
+      // Rejoining deletes the row, so this should never be true. But a drop cannot be taken back,
+      // and "they are connected right now" is the one fact that makes it unarguably wrong.
+      if (this.#hasSocketFor(playerId)) continue
+      if (await this.#drop(playerId)) acted = true
+    }
+    return acted
+  }
+
+  /** Take an absent player out: off the roster before the deal, out of the game after it. */
+  async #drop(playerId: string): Promise<boolean> {
+    const snap = this.#snapshot()
+    if (!snap) return this.#leaveLobby(playerId)
+
+    const action: Action = { type: 'drop', player: playerId, reason: 'disconnected' }
+    const result = await ruleHost.reduce(snap.state, action)
+    // Refused means there was nothing to drop them from: they are already out, or it is all over.
+    if (!result.ok) return false
+
+    this.#persist(result.state, action, result.events)
+    await this.#rearm(result.state, action)
+    this.#broadcast(result.state, result.events)
+    this.#handOffHost(result.state)
+    return true
+  }
+
+  /**
+   * Before the deal there is no game to be dropped from, only a seat to give back — so the next
+   * person to join can have it, and so the host does not deal a hand to an empty chair.
+   */
+  #leaveLobby(playerId: string): boolean {
+    const room = this.#room()
+    if (!room || room.started) return false
+
+    this.sql.exec('DELETE FROM players WHERE id = ?', playerId)
+    this.#reseat()
+    if (room.host === playerId) {
+      // The longest-seated person still here inherits the room. If nobody is, it has no host, and
+      // `#onJoin` gives it to whoever walks in next.
+      const bots = new Set(this.#bots().map(b => b.player_id))
+      const heir = this.#players().find(p => !bots.has(p.id))
+      this.sql.exec('UPDATE room SET host = ? WHERE id = 0', heir?.id ?? null)
+    }
+    this.#broadcastRoster()
+    return true
+  }
+
+  /**
+   * Make sure the host is somebody who is still in the game, and tell every screen if that means a
+   * new one. Between rounds the whole table waits on the host to deal; if the host has been
+   * dropped and nobody inherits the job, that wait never ends.
+   */
+  #handOffHost(state: GameState): void {
+    const room = this.#room()
+    if (!room) return
+    if (state.players.some(p => p.id === room.host && !p.dropped)) return
+
+    const bots = new Set(this.#bots().map(b => b.player_id))
+    const heir = state.players.find(p => !p.dropped && !bots.has(p.id))
+    if (!heir) return // nobody is left to hand it to
+
+    this.sql.exec('UPDATE room SET host = ? WHERE id = 0', heir.id)
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws.deserializeAttachment()) this.#send(ws, { t: 'host', host: heir.id })
+    }
   }
 
   // -------------------------------------------------------------------------------------------
@@ -1011,24 +1193,34 @@ export class GameRoom extends DurableObject<Env> {
   // -------------------------------------------------------------------------------------------
 
   /**
-   * The room's one alarm, doing its two jobs: playing a bot's move, and forfeiting a decision
-   * whose time is up.
+   * The room's one alarm, doing its three jobs: giving up the seat of a player who disconnected and
+   * never came back, forfeiting a decision whose time is up, and playing a bot's move.
    *
-   * Which of them is due is re-derived from storage rather than remembered, because the two
-   * deadlines share the single alarm slot a Durable Object gets — a wake set for a bot can arrive
-   * to find a player's clock expired, and the other way round — and because delivery is
-   * at-least-once and a hibernated object can be woken early.
+   * Which of them is due is re-derived from storage rather than remembered, because the deadlines
+   * share the single alarm slot a Durable Object gets — a wake set for a bot can arrive to find a
+   * player's clock expired, and the other way round — and because delivery is at-least-once and a
+   * hibernated object can be woken early.
    *
    * Every path ends with the alarm re-armed from the state it leaves behind, so the room can never
    * lose its alarm and stall; and every path is a no-op when nothing is actually due, so a
    * duplicate delivery costs nothing.
    */
   override async alarm(): Promise<void> {
+    // The absent first: dropping a player can change whose turn it is and who is on the clock, so
+    // everything below has to be read from the state that leaves behind.
+    const dropped = await this.#dropTheAbsent()
+
     const snap = this.#snapshot()
     if (!snap) {
-      // No game yet — the lobby has nothing to wake for, and no clock to keep.
+      // No game yet — the lobby has no clock to keep, and nothing to wake for but a held seat.
       this.#clearClock()
-      await this.ctx.storage.deleteAlarm()
+      await this.#armAt()
+      return
+    }
+    if (dropped) {
+      // Each drop was a move in its own right: reduced, broadcast, and the clock set for whoever
+      // owes the next decision. The wake is spent; leave the alarm right and go back to sleep.
+      await this.#rearm(snap.state, null)
       return
     }
 

@@ -284,13 +284,22 @@ function scoreCard(face: Face, counts: Record<string, number>, pressure: boolean
   return score
 }
 
-/** How many cards the player who acts next is holding. Public information; no peeking involved. */
+/**
+ * How many cards the player who acts next is holding. Public information; no peeking involved.
+ *
+ * "Next" is the next player still in the game: the seat of someone who has left shows a hand of
+ * zero, which read naively is the most dangerous opponent at the table rather than no opponent.
+ */
 function nextHandCount(view: PlayerView): number {
   const n = view.players.length
   const me = view.players.find(p => p.id === view.you)
-  if (!me || n === 0) return 99
-  const seat = (((me.seat + view.direction) % n) + n) % n
-  return view.players.find(p => p.seat === seat)?.handCount ?? 99
+  if (!me) return 99
+  for (let step = 1; step < n; step++) {
+    const seat = (((me.seat + view.direction * step) % n) + n) % n
+    const next = view.players.find(p => p.seat === seat)
+    if (next && !next.dropped) return next.handCount
+  }
+  return 99
 }
 
 function colorCounts(view: PlayerView): Record<string, number> {
