@@ -129,5 +129,9 @@ screen at once — the top bar, the tile of the player it is about, and large on
 When it runs out the game forfeits exactly that one decision: draw and pass rather than play a card
 for them. See [decisions #17](docs/decisions.md) for the ruling and `turnTimeoutMs` for the knob.
 
-**227 unit/integration tests + 6 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
-Still to come in Stage 2: sound, reconnection grace, house-rule toggles, and the full a11y pass.
+Each phone also makes a little noise at the moments that matter to its player: their turn arriving,
+anybody calling UNO, their own clock running out, and the end of the game — muted from the speaker
+button on the top bar. See [the plan, §2.3](docs/plan.md#23-sound--done).
+
+**266 unit/integration tests + 7 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+Still to come in Stage 2: reconnection grace, house-rule toggles, and the full a11y pass.
