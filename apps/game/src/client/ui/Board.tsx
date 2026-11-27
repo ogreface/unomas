@@ -14,6 +14,7 @@ import { TurnClock, useTurnClock } from './TurnClock.js'
 import type { ClockReading } from './TurnClock.js'
 import { useSoundCues } from './useSoundCues.js'
 import { playCues, setSoundMuted, soundMuted } from '../lib/sound.js'
+import { upNext } from '../lib/turnOrder.js'
 
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
@@ -29,6 +30,8 @@ export function Board({ room }: { room: RoomState }) {
   // the turn where it was while the *next* player decides whether to challenge. Everything that
   // points at a person — the label, the highlighted seat — follows this, so it agrees with the clock.
   const toAct = playerToActInView(view)
+  // …and the seat after them: the one being played on, tagged in the strip and named in the top bar.
+  const next = upNext(view)
   const phase = view.phase
 
   const canPlay = (phase.t === 'awaitingPlay' || phase.t === 'awaitingDrawnCardChoice') && myTurn
@@ -59,6 +62,7 @@ export function Board({ room }: { room: RoomState }) {
         view={view}
         nameOf={nameOf}
         bots={room.bots}
+        next={next}
         clock={clock}
         onLeave={() => navigate('/')}
       />
@@ -67,7 +71,9 @@ export function Board({ room }: { room: RoomState }) {
         players={view.players}
         you={view.you}
         side={view.side}
+        direction={view.direction}
         toAct={toAct}
+        next={next}
         unoWindow={view.unoWindow}
         clock={clock}
         bots={room.bots}
@@ -168,6 +174,7 @@ function TopBar({
   view,
   nameOf,
   bots,
+  next,
   clock,
   onLeave,
 }: {
@@ -175,6 +182,12 @@ function TopBar({
   nameOf: (id: string) => string
   /** Seats played by the computer: the label says they are thinking rather than looking like a stall. */
   bots: Set<string>
+  /**
+   * The seat being played on. Named here as well as tagged in the strip, because on a phone the
+   * strip can't always show both ends of the turn at once — when play wraps round the end of the
+   * row, the next seat is at the far end of it.
+   */
+  next: string | null
   clock: ClockReading | null
   onLeave: () => void
 }) {
@@ -189,9 +202,15 @@ function TopBar({
         ‹
       </button>
       <SideBadge side={view.side} />
-      <span className="turn-label">{turnLabel(view, bots)}</span>
+      <span className="turn-status">
+        <span className="turn-label">{turnLabel(view, bots)}</span>
+        {next !== null && (
+          <span className={`turn-next${next === view.you ? ' turn-next--you' : ''}`}>
+            {next === view.you ? 'You’re next' : `Next: ${nameOf(next)}`}
+          </span>
+        )}
+      </span>
       {clock && <TurnClock clock={clock} label={clockLabel} size={34} />}
-      <span className="dir">{view.direction === 1 ? '↻' : '↺'}</span>
       {view.activeColor && (
         <span className="active-color-tag" title="The colour in play right now">
           <span

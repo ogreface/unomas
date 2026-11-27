@@ -74,8 +74,8 @@ test('two players finish a real round together', async ({ browser }) => {
   expect(await a.locator('.hand .card').count()).toBeGreaterThanOrEqual(7)
 
   // The inverted-information channel is visible on screen: each player sees the *other's* cards but
-  // renders none of their own in the opponent strip.
-  expect(await a.locator('.opponent .mini-card').count()).toBeGreaterThanOrEqual(7)
+  // renders none of their own in the seat strip.
+  expect(await a.locator('.seat .mini-card').count()).toBeGreaterThanOrEqual(7)
 
   // Auto-play first-legal-card until a round completes on either screen.
   let sawEnd = false
@@ -191,8 +191,8 @@ test('everyone watches the same countdown, and a player who vanishes does not st
   // Exactly one of the two boards hangs the clock on an *opponent* tile — the player whose turn it
   // is not sees it on the person they are waiting for.
   const onAnOpponent =
-    (await a.locator('.opponent .turn-clock').count()) +
-    (await b.locator('.opponent .turn-clock').count())
+    (await a.locator('.seat .turn-clock').count()) +
+    (await b.locator('.seat .turn-clock').count())
   expect(onAnOpponent).toBe(1)
 
   // Now nobody touches anything, as though whoever is up has walked away from the call. The server's
@@ -304,7 +304,7 @@ test('one human plays a real round against a computer player', async ({ page }) 
   await page.getByRole('button', { name: /Start game/ }).click()
   await expect(page.locator('.board')).toBeVisible()
   // The board labels the computer, so a pause on its turn reads as thinking rather than as a stall.
-  await expect(page.locator('.opponent .tag--bot')).toBeVisible()
+  await expect(page.locator('.seat .tag--bot')).toBeVisible()
 
   let sawEnd = false
   let idleStreak = 0
