@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { PhaseView } from '@flipside/engine'
 import { liveGap, nextInOrder, revealScroll, upNext } from './turnOrder.js'
 
 /**
@@ -39,16 +40,36 @@ describe('nextInOrder', () => {
 })
 
 describe('upNext', () => {
-  const table = (t: string) => ({ phase: { t }, players: seats, turn: 'bo', direction: 1 as const })
+  // Bo holds the turn throughout; what changes is who the table is waiting on.
+  const table = (phase: PhaseView) => ({ phase, players: seats, turn: 'bo', direction: 1 as const })
+  const resume = { actor: 1, extraSkips: 0, forcedTurn: null }
 
-  it('names the next seat while a turn is in progress, including mid-challenge and mid-colour-choice', () => {
-    for (const t of ['awaitingPlay', 'awaitingDrawnCardChoice', 'awaitingChallenge', 'awaitingColorChoice']) {
-      expect(upNext(table(t))).toBe('cy')
+  it('is the seat after the player on turn while they play, draw, or name a colour', () => {
+    expect(upNext(table({ t: 'awaitingPlay' }))).toBe('cy')
+    expect(upNext(table({ t: 'awaitingDrawnCardChoice', card: 'k1' }))).toBe('cy')
+    expect(upNext(table({ t: 'awaitingColorChoice', chooser: 'bo', reason: 'flip', resume }))).toBe('cy')
+  })
+
+  it('looks past the challenger while a wild draw waits on its challenge', () => {
+    // Bo played the wild draw, so the turn still sits with Bo — but the table is waiting on Cy, the
+    // seat it is highlighting. Whatever Cy decides, the seat after Cy is the one to flag: Cy draws
+    // and loses the turn unless the challenge catches Bo out.
+    const challenge: PhaseView = {
+      t: 'awaitingChallenge',
+      challenger: 'cy',
+      accused: 'bo',
+      kind: 'wildDraw2',
+      color: 'red',
+      priorColor: 'blue',
+      resume,
     }
+    expect(upNext(table(challenge))).toBe('di')
   })
 
   it('names nobody between rounds, when there is no turn to follow', () => {
-    for (const t of ['lobby', 'roundOver', 'gameOver']) expect(upNext(table(t))).toBeNull()
+    expect(upNext(table({ t: 'lobby' }))).toBeNull()
+    expect(upNext(table({ t: 'roundOver', winner: 'bo', points: 40 }))).toBeNull()
+    expect(upNext(table({ t: 'gameOver', winner: 'bo' }))).toBeNull()
   })
 })
 

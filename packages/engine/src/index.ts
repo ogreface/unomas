@@ -30,7 +30,7 @@ export {
   seatAfter,
 } from './effects.js'
 
-export { playerToAct } from './clock.js'
+export { playerToAct, playerToActInView } from './clock.js'
 
 export { handValue, roundPoints } from './score.js'
 

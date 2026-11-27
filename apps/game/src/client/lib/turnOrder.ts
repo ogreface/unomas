@@ -7,7 +7,8 @@
  * where the turn actually went. This is just reading the seats in the order they already sit.
  */
 
-import type { Direction } from '@flipside/engine'
+import { playerToActInView } from '@flipside/engine'
+import type { Direction, PhaseView } from '@flipside/engine'
 
 /**
  * The player who plays after `turn`, walking `direction` around the seats (array order is seat
@@ -24,24 +25,19 @@ export function nextInOrder(
   return players[(((at + direction) % n) + n) % n]?.id ?? null
 }
 
-/** Phases with no turn in progress: before the deal, and between rounds while the host deals. */
-const BETWEEN_TURNS = new Set(['lobby', 'roundOver', 'gameOver'])
-
 /**
- * Who is up next on this table — the seat the player on turn is playing on. Null between rounds:
- * the turn pointer still names somebody then, but nobody is about to be played on.
- *
- * Mid-challenge this is the challenger, and mid-colour-choice it is whoever plays once the colour is
- * named — both still "the next seat", because the turn has not moved yet.
+ * Who is up next on this table: the seat after the one the table is waiting on. Counted from
+ * `playerToActInView`, not `turn`, so it lines up with the highlighted seat and the clock — the two
+ * differ while a wild draw waits on its challenge, when the turn still sits with whoever played it
+ * and the decision belongs to the seat after them. Null between rounds, when nobody is up.
  */
 export function upNext(table: {
-  phase: { t: string }
+  phase: PhaseView
   players: readonly { id: string }[]
   turn: string | null
   direction: Direction
 }): string | null {
-  if (BETWEEN_TURNS.has(table.phase.t)) return null
-  return nextInOrder(table.players, table.turn, table.direction)
+  return nextInOrder(table.players, playerToActInView(table), table.direction)
 }
 
 /**

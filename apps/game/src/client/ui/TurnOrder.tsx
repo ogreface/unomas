@@ -9,10 +9,10 @@ import { liveGap, revealScroll } from '../lib/turnOrder.js'
  * the projected table included, lists the players identically: on a call, "Bo, you're after Ann"
  * has to be true on everyone's phone.
  *
- * The chevrons point the way play is going and flip when it reverses. The one between the player
- * on turn and the next seat is lit, so "who are they playing on" is answered by an arrow rather
- * than by counting. Play wraps around the ends of the row, so the row has a chevron at each end
- * too: when the play crosses from the last seat to the first, both of those light.
+ * The chevrons point the way play is going and flip when it reverses. The one between the seat the
+ * table is waiting on and the next seat is lit, so "who are they playing on" is answered by an
+ * arrow rather than by counting. Play wraps around the ends of the row, so the row has a chevron at
+ * each end too: when the play crosses from the last seat to the first, both of those light.
  *
  * On a phone the row is wider than the screen, so whenever the turn moves the strip scrolls just
  * far enough to show who is playing and who they are playing on.
@@ -20,7 +20,7 @@ import { liveGap, revealScroll } from '../lib/turnOrder.js'
 export function TurnOrder<P extends { id: string }>({
   players,
   direction,
-  turn,
+  toAct,
   next,
   className,
   children,
@@ -28,7 +28,8 @@ export function TurnOrder<P extends { id: string }>({
   /** In seat order. */
   players: readonly P[]
   direction: Direction
-  turn: string | null
+  /** Who the table is waiting on (`playerToActInView`) — the seat the play is coming from. */
+  toAct: string | null
   /** The seat being played on, or null between rounds (when no arrow is lit). */
   next: string | null
   className: string
@@ -39,7 +40,7 @@ export function TurnOrder<P extends { id: string }>({
 
   useEffect(() => {
     const strip = stripRef.current
-    const at = turn === null ? undefined : slots.current.get(turn)
+    const at = toAct === null ? undefined : slots.current.get(toAct)
     if (!strip || !at) return
     const after = next === null ? undefined : slots.current.get(next)
     const span = (el: HTMLElement) => ({ left: el.offsetLeft, right: el.offsetLeft + el.offsetWidth })
@@ -50,9 +51,9 @@ export function TurnOrder<P extends { id: string }>({
     )
     // Smoothness comes from the stylesheet's `scroll-behavior`, which reduced-motion turns off.
     if (left !== strip.scrollLeft) strip.scrollTo({ left })
-  }, [turn, next, players.length])
+  }, [toAct, next, players.length])
 
-  const gap = next === null ? null : liveGap(players, turn, direction)
+  const gap = next === null ? null : liveGap(players, toAct, direction)
   const n = players.length
   // Gap 0 is the wrap-around, which is drawn at both ends of the row.
   const lit = (k: number) => gap !== null && (k === gap || (gap === 0 && k === n))
@@ -71,7 +72,7 @@ export function TurnOrder<P extends { id: string }>({
           {i > 0 && <Chevron lit={lit(i)} />}
           <div
             role="listitem"
-            aria-current={p.id === turn ? 'step' : undefined}
+            aria-current={p.id === toAct ? 'step' : undefined}
             className="order__slot"
             ref={el => {
               if (el) slots.current.set(p.id, el)

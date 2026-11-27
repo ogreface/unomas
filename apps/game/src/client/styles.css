@@ -470,6 +470,35 @@ input {
   height: 6px;
   border-radius: 50%;
 }
+.sound-toggle {
+  padding: 4px 6px;
+  font-size: 16px;
+  line-height: 1;
+}
+.sound-toggle[aria-pressed='true'] {
+  opacity: 0.55;
+}
+/*
+ * A phone's top bar has no width to spare once the turn clock is showing. On one, the colour tag
+ * shows only its dot: the discard pile names the colour in words right beside the card, so the bar
+ * repeating it costs the turn label its room. (The name stays in the tree for screen readers.)
+ */
+@media (max-width: 420px) {
+  .topbar {
+    gap: 7px;
+  }
+  .topbar .active-color-tag__name {
+    /* as .visually-hidden */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
 .active-color {
   display: inline-block;
   width: 16px;

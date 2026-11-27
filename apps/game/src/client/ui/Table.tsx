@@ -1,4 +1,4 @@
-import { otherSide } from '@flipside/engine'
+import { otherSide, playerToActInView } from '@flipside/engine'
 import { useRoom } from '../net/useRoom.js'
 import { Card } from './Card.js'
 import { Feed } from './Feed.js'
@@ -33,6 +33,9 @@ export function Table({ code }: { code: string }) {
   }
 
   const inactive = otherSide(table.side)
+  // The highlighted seat is whoever the table is waiting on, which a challenge makes somebody other
+  // than the player at the turn — the same reading the clock is armed from.
+  const toAct = playerToActInView(table)
   const next = upNext(table)
 
   return (
@@ -60,13 +63,13 @@ export function Table({ code }: { code: string }) {
       <TurnOrder
         players={table.players}
         direction={table.direction}
-        turn={table.turn}
+        toAct={toAct}
         next={next}
         className="table-players"
       >
         {p => (
           <div
-            className={`table-player${p.id === table.turn ? ' table-player--turn' : ''}${p.id === next ? ' table-player--next' : ''}`}
+            className={`table-player${p.id === toAct ? ' table-player--turn' : ''}${p.id === next ? ' table-player--next' : ''}`}
           >
             {p.id === next && <NextFlag />}
             <div className="table-player__head">

@@ -21,7 +21,7 @@ export function Players({
   you,
   side,
   direction,
-  turn,
+  toAct,
   next,
   unoWindow,
   clock,
@@ -32,8 +32,12 @@ export function Players({
   you: string
   side: Side
   direction: Direction
-  turn: string | null
-  /** The seat being played on — see `upNext`. */
+  /**
+   * Who the table is waiting on — the seat that gets the highlight. Not `view.turn`: during a
+   * challenge the turn still sits with the player who played the wild draw.
+   */
+  toAct: string | null
+  /** The seat after `toAct` — see `upNext`. */
   next: string | null
   unoWindow: string | null
   clock: ClockReading | null
@@ -43,10 +47,10 @@ export function Players({
 }) {
   const inactive = otherSide(side)
   const seatClass = (p: PlayerSummaryView) =>
-    `seat${p.id === you ? ' seat--you' : ''}${p.id === turn ? ' seat--turn' : ''}${p.id === next ? ' seat--next' : ''}`
+    `seat${p.id === you ? ' seat--you' : ''}${p.id === toAct ? ' seat--turn' : ''}${p.id === next ? ' seat--next' : ''}`
 
   return (
-    <TurnOrder players={players} direction={direction} turn={turn} next={next} className="seats">
+    <TurnOrder players={players} direction={direction} toAct={toAct} next={next} className="seats">
       {p =>
         p.id === you ? (
           <div className={seatClass(p)}>
