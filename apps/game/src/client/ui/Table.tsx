@@ -1,7 +1,9 @@
+import { useCallback, useState } from 'react'
 import { otherSide, playerToActInView } from '@flipside/engine'
 import { useRoom } from '../net/useRoom.js'
 import { Card } from './Card.js'
 import { Feed } from './Feed.js'
+import { GameLog, GameLogToggle } from './GameLog.js'
 import { SideBadge } from './SideBadge.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
 import { NextFlag, TurnOrder } from './TurnOrder.js'
@@ -16,8 +18,12 @@ import { upNext } from '../lib/turnOrder.js'
 export function Table({ code }: { code: string }) {
   const room = useRoom({ code, role: 'spectator', nickname: 'Table', enabled: true })
   const table = room.table
-  const nameOf = (id: string) => table?.players.find(p => p.id === id)?.name ?? '—'
+  // Stable between snapshots, so the game log (memoised) is not rebuilt on every tick of the clock.
+  const players = table?.players
+  const nameOf = useCallback((id: string) => players?.find(p => p.id === id)?.name ?? '—', [players])
   const clock = useTurnClock(room.timer)
+  const [logOpen, setLogOpen] = useState(false)
+  const closeLog = useCallback(() => setLogOpen(false), [])
 
   if (!table) {
     return (
@@ -58,6 +64,7 @@ export function Table({ code }: { code: string }) {
             <span className="table-clock__who">{nameOf(clock.timer.player)} to move</span>
           </span>
         )}
+        <GameLogToggle open={logOpen} onToggle={() => setLogOpen(open => !open)} />
       </header>
 
       <TurnOrder
@@ -107,6 +114,7 @@ export function Table({ code }: { code: string }) {
       </section>
 
       <Feed feed={room.feed} nameOf={nameOf} />
+      {logOpen && <GameLog log={room.log} nameOf={nameOf} onClose={closeLog} />}
     </main>
   )
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { playerToActInView } from '@flipside/engine'
 import type { CardView, Color, PlayerView } from '@flipside/engine'
 import { SideBadge } from './SideBadge.js'
@@ -10,6 +10,7 @@ import { Players } from './Players.js'
 import { Hand } from './Hand.js'
 import { ColorPicker } from './ColorPicker.js'
 import { Feed } from './Feed.js'
+import { GameLog, GameLogToggle } from './GameLog.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
 import type { ClockReading } from './TurnClock.js'
 import { useSoundCues } from './useSoundCues.js'
@@ -19,11 +20,16 @@ import { upNext } from '../lib/turnOrder.js'
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
   const [pendingWild, setPendingWild] = useState<CardView | null>(null)
+  const [logOpen, setLogOpen] = useState(false)
+  const closeLog = useCallback(() => setLogOpen(false), [])
+  const toggleLog = useCallback(() => setLogOpen(open => !open), [])
   // One ticking clock per screen, read once and handed down — see `TurnClock.tsx`.
   const clock = useTurnClock(room.timer)
   useSoundCues(view, room.feed, clock)
 
-  const nameOf = (id: string) => view.players.find(p => p.id === id)?.name ?? '—'
+  // Stable between views, so the game log (memoised) is not rebuilt on every tick of the clock.
+  const players = view.players
+  const nameOf = useCallback((id: string) => players.find(p => p.id === id)?.name ?? '—', [players])
   const me = view.players.find(p => p.id === view.you)
   const myTurn = view.turn === view.you
   // Who the table is waiting on. Usually the player at the turn, but not always: a wild draw leaves
@@ -65,6 +71,8 @@ export function Board({ room }: { room: RoomState }) {
         next={next}
         clock={clock}
         onLeave={() => navigate('/')}
+        logOpen={logOpen}
+        onToggleLog={toggleLog}
       />
 
       <Players
@@ -91,7 +99,14 @@ export function Board({ room }: { room: RoomState }) {
         onDraw={() => room.send({ t: 'draw' })}
       />
 
+      {/* On a phone the top bar has no width left for the Log button, so it sits here instead —
+          under the discard pile, in space the board is not using. See `.board-tools` in the CSS. */}
+      <div className="board-tools">
+        <GameLogToggle open={logOpen} onToggle={toggleLog} />
+      </div>
+
       <Feed feed={room.feed} nameOf={nameOf} />
+      {logOpen && <GameLog log={room.log} nameOf={nameOf} onClose={closeLog} />}
 
       <div className="action-bar">
         {phase.t === 'awaitingChallenge' && phase.challenger === view.you && (
@@ -177,6 +192,8 @@ function TopBar({
   next,
   clock,
   onLeave,
+  logOpen,
+  onToggleLog,
 }: {
   view: PlayerView
   nameOf: (id: string) => string
@@ -190,6 +207,8 @@ function TopBar({
   next: string | null
   clock: ClockReading | null
   onLeave: () => void
+  logOpen: boolean
+  onToggleLog: () => void
 }) {
   // The label and the clock both belong to whoever owes the decision, which is not always the player
   // at the turn: a challenge is owed by somebody else while the turn sits still. A bot is never on
@@ -220,6 +239,7 @@ function TopBar({
           <span className="active-color-tag__name">{view.activeColor}</span>
         </span>
       )}
+      <GameLogToggle open={logOpen} onToggle={onToggleLog} />
       <SoundToggle />
     </header>
   )

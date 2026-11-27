@@ -837,6 +837,128 @@ input {
     opacity: 0;
   }
 }
+/* ── game log drawer ──────────────────────────────────────────────────────────────────────── */
+/*
+ * Above the toasts, below the colour picker and the round-over panel, so it never sits on top of a
+ * decision the game is waiting for — and below the "Reconnecting…" banner, which it starts beneath
+ * while that is up, so a dropped link is never hidden and the close button stays in reach. No
+ * backdrop: on a wide screen you can leave it open and play.
+ */
+.log {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(340px, 88vw);
+  z-index: 38;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--edge);
+  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.45);
+  padding: max(10px, env(safe-area-inset-top)) 0 env(safe-area-inset-bottom);
+  animation: log-in 0.18s ease-out;
+}
+@keyframes log-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+.log__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px 8px 16px;
+  border-bottom: 1px solid var(--edge);
+}
+.log__title {
+  margin: 0;
+  font-size: 15px;
+}
+.log__list {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 0;
+  padding: 6px 16px 12px;
+  font-size: 13px;
+}
+.log__entry {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 4px 0;
+}
+.log__pip {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translateY(-1px);
+}
+.log__empty {
+  padding: 8px 0;
+}
+/* Each round opens with a divider, so a long game reads as chapters. */
+.log__entry--roundStarted {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+  font-weight: 700;
+  color: var(--accent);
+}
+.log__entry--roundStarted:first-child {
+  margin-top: 0;
+  padding-top: 4px;
+  border-top: 0;
+}
+.log__entry--flipped {
+  font-weight: 700;
+  color: var(--accent);
+}
+.log__entry--roundEnded,
+.log__entry--gameEnded {
+  font-weight: 700;
+}
+.log__entry--unoPenalty,
+.log__entry--timedOut {
+  color: var(--warn);
+}
+/*
+ * Where the Log button lives. A phone's top bar is already giving up the colour's name to fit the
+ * turn label beside the clock (see the .topbar media query), and even an icon there would cost the
+ * label half of what it has left. So at that width the button moves out of the bar, to a row of its
+ * own under the piles.
+ */
+.board-tools {
+  display: none;
+}
+@media (max-width: 420px) {
+  .topbar .log-toggle {
+    display: none;
+  }
+  .board-tools {
+    display: flex;
+    justify-content: flex-end;
+  }
+}
+/* The banner is one 13px line with 6px of padding either side. */
+.conn-banner + .board .log {
+  top: 31px;
+}
+.table-head .log-toggle {
+  margin-left: auto;
+}
+.table-head .table-clock ~ .log-toggle {
+  margin-left: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .log {
+    animation: none;
+  }
+}
+
 .flip-banner {
   position: fixed;
   inset: 0;

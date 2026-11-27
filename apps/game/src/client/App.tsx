@@ -38,10 +38,12 @@ export function App() {
   switch (route.kind) {
     case 'home':
       return <Home />
+    // Keyed by code: going straight from one room to another (back/forward, a pasted link) must start
+    // from nothing, not carry the last room's board, game log and sequence number into the next.
     case 'room':
-      return <Room code={route.code!} />
+      return <Room key={route.code} code={route.code!} />
     case 'table':
-      return <Table code={route.code!} />
+      return <Table key={route.code} code={route.code!} />
     default:
       return (
         <main className="screen screen--center">

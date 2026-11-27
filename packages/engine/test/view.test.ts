@@ -240,6 +240,39 @@ describe('event redaction', () => {
       expect(faceStr(view.face as never)).toBe('blue 7')
     }
   })
+
+  it('a played Flip is shown as the card that was played, not the face the flip turned it to', () => {
+    // Redaction reads the state *after* the play, and by then a Flip has turned the whole table
+    // over. Naming the card from that state shows its other face: "played purple 6" for what was,
+    // on the table, a blue Flip — a card nobody could have played on the light side.
+    const d = new Deal()
+    const top = d.face('light', 'blue 4')
+    const flip = d.both('blue flip', 'purple 6')
+
+    const g = rigged(top, { p0: [flip, ...d.filler(2)], p1: d.filler(2), p2: d.filler(2), p3: d.filler(2) })
+    const events = g.do({ type: 'play', player: 'p0', card: flip })
+    expect(g.state.side).toBe('dark')
+    const played = events.find(e => e.t === 'cardPlayed')!
+
+    for (const who of ['p0', 'p1', 'spectator']) {
+      const view = redactEvent(g.state, played, who) as { face: unknown }
+      expect(faceStr(view.face as never)).toBe('blue flip')
+    }
+  })
+
+  it('and the same on the way back, from the dark side to the light', () => {
+    const d = new Deal()
+    const top = d.face('dark', 'orange 3')
+    const flip = d.both('green 1', 'orange flip')
+
+    const g = rigged(top, { p0: [flip, ...d.filler(2)], p1: d.filler(2), p2: d.filler(2), p3: d.filler(2) }, 'dark')
+    const events = g.do({ type: 'play', player: 'p0', card: flip })
+    expect(g.state.side).toBe('light')
+    const played = events.find(e => e.t === 'cardPlayed')!
+
+    const view = redactEvent(g.state, played, 'p1') as { face: unknown }
+    expect(faceStr(view.face as never)).toBe('orange flip')
+  })
 })
 
 describe('the table view (for a screenshare)', () => {

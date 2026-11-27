@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ClientMessageInput, ConnectRole, LobbyPlayer, ServerMessage } from '@flipside/protocol'
+import type { ClientMessageInput, ConnectRole, LobbyPlayer, LogBatch, ServerMessage } from '@flipside/protocol'
 import type { EventView, PlayerView, TableView } from '@flipside/engine'
 import { connect, type ConnStatus, type Connection } from './connection.js'
 import { anchorTimer } from '../lib/turnClock.js'
+import { appendToLog, mergeSnapshotLog } from '../lib/gameLog.js'
 import type { AnchoredTimer } from '../lib/turnClock.js'
 
 export interface RosterState {
@@ -31,6 +32,12 @@ export interface RoomState {
   fatal: { code: string; message: string } | null
   /** Rolling window of recent events for callouts/animations. */
   feed: FeedEvent[]
+  /**
+   * Every event of the game so far, one batch per action, oldest first — the game log drawer. Live
+   * events append to it, and each snapshot fills in whatever this screen missed (all of it, for a
+   * fresh page), so a refresh or a reconnect loses nothing. See `lib/gameLog.ts`.
+   */
+  log: LogBatch[]
   /**
    * The turn clock, anchored to this device the moment it arrived. Null when nobody is on the clock.
    * Every screen in the room is counting down the same server-issued window.
@@ -68,20 +75,24 @@ export function useRoom(opts: {
   const [error, setError] = useState<{ code: string; message: string } | null>(null)
   const [fatal, setFatal] = useState<{ code: string; message: string } | null>(null)
   const [feed, setFeed] = useState<FeedEvent[]>([])
+  const [log, setLog] = useState<LogBatch[]>([])
   const [timer, setTimer] = useState<AnchoredTimer | null>(null)
   const [bots, setBots] = useState<Set<string>>(() => new Set())
 
   const connRef = useRef<Connection | null>(null)
+  // The last action this screen has applied — and so the last one its game log holds. Sent with
+  // every (re)join, so the room sends the log only from there.
   const lastSeqRef = useRef(0)
   const feedIdRef = useRef(0)
 
-  const pushEvents = useCallback((events: EventView[]) => {
+  const pushEvents = useCallback((seq: number, events: EventView[]) => {
     if (events.length === 0) return
     setFeed(prev => {
       const next = [...prev]
       for (const event of events) next.push({ id: feedIdRef.current++, event })
       return next.slice(-FEED_LIMIT)
     })
+    setLog(prev => appendToLog(prev, seq, events))
   }, [])
 
   const onMessage = useCallback(
@@ -105,6 +116,7 @@ export function useRoom(opts: {
           // Anchored here, at the instant the frame landed, and never against a server timestamp —
           // see `lib/turnClock.ts`.
           setTimer(msg.timer ? anchorTimer(msg.timer) : null)
+          setLog(prev => mergeSnapshotLog(prev, msg.log))
           lastSeqRef.current = msg.view.seq
           break
         case 'events':
@@ -113,18 +125,19 @@ export function useRoom(opts: {
           setTimer(msg.timer ? anchorTimer(msg.timer) : null)
           lastSeqRef.current = msg.view.seq
           setError(null)
-          pushEvents(msg.events)
+          pushEvents(msg.view.seq, msg.events)
           break
         case 'tableSync':
           setTable(msg.table)
           setTimer(msg.timer ? anchorTimer(msg.timer) : null)
+          setLog(prev => mergeSnapshotLog(prev, msg.log))
           lastSeqRef.current = msg.table.seq
           break
         case 'tableEvents':
           setTable(msg.table)
           setTimer(msg.timer ? anchorTimer(msg.timer) : null)
           lastSeqRef.current = msg.table.seq
-          pushEvents(msg.events)
+          pushEvents(msg.table.seq, msg.events)
           break
         case 'error':
           if (msg.fatal) {
@@ -180,6 +193,7 @@ export function useRoom(opts: {
     error,
     fatal,
     feed,
+    log,
     timer,
     bots,
     send,

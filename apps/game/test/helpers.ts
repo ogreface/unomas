@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test'
 import { expect } from 'vitest'
 import type { ClientMessageInput, ServerMessage } from '@flipside/protocol'
-import type { Color, PlayerView } from '@flipside/engine'
+import type { Color, EventView, PlayerView } from '@flipside/engine'
 import type { GameRoom } from '../src/worker/room.js'
 
 export type RoomStub = DurableObjectStub<GameRoom>
@@ -21,6 +21,8 @@ export class Client {
   /** Every rejection this socket has ever been sent. A driver loop asserting this is empty is a
    *  cheap way to prove nothing illegal was attempted along the way. */
   readonly errors: Array<Extract<ServerMessage, { t: 'error' }>> = []
+  /** Every event this socket has been sent live, in order — what its screen narrated. */
+  readonly events: EventView[] = []
   private readonly queue: ServerMessage[] = []
   private readonly waiters: Array<(m: ServerMessage) => void> = []
 
@@ -30,6 +32,7 @@ export class Client {
       const msg = JSON.parse(event.data as string) as ServerMessage
       if (msg.t === 'events' || msg.t === 'sync') this.latestView = msg.view
       if (msg.t === 'error') this.errors.push(msg)
+      if (msg.t === 'events' || msg.t === 'tableEvents') this.events.push(...msg.events)
       const waiter = this.waiters.shift()
       if (waiter) waiter(msg)
       else this.queue.push(msg)
