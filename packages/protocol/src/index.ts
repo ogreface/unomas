@@ -292,6 +292,16 @@ export interface RosterMessage {
   started: boolean
 }
 
+/**
+ * The host changed mid-game, because the old one was dropped from it. Before the deal the roster
+ * carries the host; after it there is no roster, and somebody still has to be able to deal the next
+ * round — so every screen is told who.
+ */
+export interface HostMessage {
+  t: 'host'
+  host: PlayerId
+}
+
 /** A rejected action, or a connection-level problem. `code` is the engine's when it has one. */
 export interface ErrorMessage {
   t: 'error'
@@ -308,6 +318,7 @@ export type ServerMessage =
   | TableSyncMessage
   | TableEventsMessage
   | RosterMessage
+  | HostMessage
   | ErrorMessage
 
 export type ServerMessageType = ServerMessage['t']

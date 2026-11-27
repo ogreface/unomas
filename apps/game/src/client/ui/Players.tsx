@@ -11,6 +11,10 @@ import type { ClockReading } from './TurnClock.js'
  *
  * Whoever the room is waiting on also wears the countdown, so "why has nothing happened for twenty
  * seconds" is answered on the tile of the person it is about.
+ *
+ * A player who has left keeps their tile — greyed, and labelled — rather than vanishing from the
+ * row: the turn visibly skipping an empty chair is easier to follow than a table that has quietly
+ * rearranged itself, and their score is still a line on the scoreboard.
  */
 export function Players({
   players,
@@ -38,7 +42,10 @@ export function Players({
   return (
     <div className="opponents">
       {opponents.map(p => (
-        <div key={p.id} className={`opponent${p.id === turn ? ' opponent--turn' : ''}`}>
+        <div
+          key={p.id}
+          className={`opponent${p.id === turn ? ' opponent--turn' : ''}${p.dropped ? ' opponent--out' : ''}`}
+        >
           <div className="opponent__head">
             <span className="seat-dot" data-seat={p.seat} />
             <span className="opponent__name">{p.name}</span>
@@ -47,7 +54,13 @@ export function Players({
                 bot
               </span>
             )}
-            <span className="opponent__count">{p.handCount}</span>
+            {p.dropped ? (
+              <span className="tag tag--out" title={`${p.name} is no longer in this game`}>
+                left
+              </span>
+            ) : (
+              <span className="opponent__count">{p.handCount}</span>
+            )}
             {clock?.timer.player === p.id && <TurnClock clock={clock} label={p.name} size={28} />}
             {p.saidUno && <span className="tag tag--uno">UNO</span>}
             {unoWindow === p.id && (

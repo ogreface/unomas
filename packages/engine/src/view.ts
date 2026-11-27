@@ -32,6 +32,7 @@ import type {
   CardId,
   Color,
   Direction,
+  DropReason,
   Face,
   GameEvent,
   GameState,
@@ -58,6 +59,11 @@ export interface PlayerSummaryView {
   score: number
   handCount: number
   saidUno: boolean
+  /**
+   * Why this player is out of the game, or null while they are in it (D18). Their seat stays in
+   * the list — it is still a name on the scoreboard — but it holds no cards and takes no turns.
+   */
+  dropped: DropReason | null
   /**
    * What you can see of this player's hand — the **inactive** face of each card, in hand order.
    * Empty for yourself: you are not allowed to see your own backs.
@@ -202,6 +208,8 @@ export function viewFor(state: GameState, you: PlayerId): PlayerView {
       score: p.score,
       handCount: p.hand.length,
       saidUno: p.saidUno,
+      // `?? null`: a snapshot from before players could leave has no such field.
+      dropped: p.dropped ?? null,
       // ── the channel ──────────────────────────────────────────────────────────────────────
       // Everyone else's cards are seen from behind: their INACTIVE face. Your own are not seen
       // from behind at all — you are holding them.
@@ -334,6 +342,8 @@ export interface TableView {
     score: number
     handCount: number
     saidUno: boolean
+    /** Why this seat is empty, or null while its player is in the game (D18). */
+    dropped: DropReason | null
     /** Every player's hand as the *table* sees it: inactive faces. This is public information. */
     visible: CardView[]
   }>
@@ -373,6 +383,7 @@ export function tableView(state: GameState): TableView {
       score: p.score,
       handCount: p.hand.length,
       saidUno: p.saidUno,
+      dropped: p.dropped ?? null,
       visible: p.hand.map(id => cardView(state, cards, id, inactive)),
     })),
   }

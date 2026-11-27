@@ -16,8 +16,9 @@ This file is the source of truth for those rulings. It is the prose companion to
 The ambiguity numbers (**#1–#16**) match §6 of
 [`research/rules-spec.md`](research/rules-spec.md). The decision tags (**D2–D14**) are the anchors
 used in code comments — grep `Dn` in `packages/engine/src` to jump to the implementation of any
-ruling. **#17** is the one entry Mattel could not have left ambiguous, because it cannot happen
-around a table: a player who simply stops playing.
+ruling. **#17** and **#18** are the two entries Mattel could not have left ambiguous, because
+neither can happen around a table: a player who simply stops playing, and a player who is no longer
+there at all.
 
 Every row has a test. If you change a default here, a test in `packages/engine/test` should change
 with it.
@@ -42,6 +43,7 @@ From `DEFAULT_OPTIONS` in [`types.ts`](../packages/engine/src/types.ts):
 | `scoreLimit` | `500` | official |
 | `handSize` | `7` | official |
 | `turnTimeoutMs` | `30_000` | #17 / D17 — online only |
+| `dropAfterTimeouts` | `3` | #18 / D18 — online only |
 
 Rulings that are **structural** (not a toggle) — opening-card policy, who picks the colour after a
 Flip, the degenerate two-player cases, the challenge visibility rule, the dark-face information
@@ -284,6 +286,68 @@ can make.
   `apps/game/test/timeout.test.ts` (the alarm: eviction mid-turn, duplicate delivery, early wake,
   reconnect, the countdown reaching every screen, and the two errands sharing the one alarm slot).
 
+### #18 — A player who is no longer there · D18 · `dropAfterTimeouts`
+
+#17 keeps the table moving past a player who has stopped deciding, one forfeited turn at a time. It
+does not answer what happens when they are never coming back: left alone, the table waits out a full
+clock for that seat on every lap, from here to 500 points.
+
+- **Ruling:** a player who has gone is **dropped from the game**, for good. Two things count as
+  gone:
+  - **They closed the tab.** All the room sees of that is a closed connection — and it sees exactly
+    the same thing for a reload, a phone in a dead spot, and a deploy, which cuts every socket in the
+    room at once. So the seat is **held for 10 seconds** after a player's *last* connection closes,
+    and they are dropped only if they have not reconnected by then — which is also what forgives a
+    tab closed by accident: open it again inside the ten seconds and nothing has happened. A second
+    tab or a second device still open means they have not left at all; the projected table view is
+    nobody's seat.
+  - **The clock ran out on them `dropAfterTimeouts` times in a row** (default **3**; `0` never drops
+    anyone). *In a row* is the point: three slow turns over an evening are three slow turns, but
+    three with nothing in between is an empty chair. Anything the player does themselves — a play, a
+    draw, an UNO call — wipes the count. The third strike *is* the drop: no card is drawn for it.
+- **What a drop does** — what would happen if somebody got up from a real table:
+
+  | | |
+  |---|---|
+  | Their seat | stays where it is, empty. They keep their name and score on the board, and every other seat keeps its number — the turn simply passes over them |
+  | Their hand | is shuffled into the **draw** pile. Shuffled, because the table has seen the back of every card in it; the draw pile, because the discard pile's order is what the next Flip turns over (#5) and nobody played these |
+  | The rules that count players | count the players still in: three who lose one are a two-player game, and a Reverse is a Skip from that moment (#6) |
+  | One player left | wins the **game**. No round is scored for it — nobody went out |
+
+- **If the game was waiting on them**, it is settled without them, in whichever way costs the people
+  still sitting there the least:
+
+  | They owed | What happens | Why |
+  |---|---|---|
+  | a play, or the drawn-card choice | the turn passes; nothing is drawn | the cards are going back in the deck anyway |
+  | a colour choice | the side's first colour, as the clock would have picked (#17) | play cannot continue without one |
+  | a challenge decision (they were the target of a wild draw) | nobody draws; the play stands and the turn moves past them | there is nobody to draw — and if that wild draw was the accused's last card, they have won the round |
+  | — and if it was *their* wild draw awaiting an answer | **the draw is void**; its target takes an ordinary turn | their hand has gone back in the deck, so nobody can ever show whether it was a bluff. Letting the draw stand takes the challenge away from its target; letting them challenge finds an empty hand and calls it innocent |
+
+- **It is final for that game.** A dropped player who comes back gets their own seat's view — the
+  board, an empty hand, and a plain statement of why — so they can watch, but nothing they send is
+  accepted (`not_in_game`) and the next deal does not include them. Letting them back in for the
+  next round is a reasonable house rule and is not built.
+- **Before the deal** there is no game to be dropped from, only a seat to give back: after the same
+  10 seconds the player comes off the roster and the gap closes, so the host does not deal a hand to
+  an empty chair.
+- **The host.** Between rounds the whole table waits on the host to deal, so the job cannot leave
+  with them: it passes to the longest-seated person still in the game, and every screen is told.
+- **Computer players** are never dropped (they have no connection to lose and are never on the
+  clock), and they stop when the last *person* has gone. To the rules two bots are a perfectly good
+  game; left to it they would play on to 500 for an audience of nobody.
+- **Where it lives:** the same split as #17. *That* a player is gone is the Durable Object's call
+  ([`room.ts`](../apps/game/src/worker/room.ts) — the `absences` table, sharing the room's one alarm
+  with the turn clock and the bot driver); *what that does* is a rule
+  ([`reduce.ts`](../packages/engine/src/reduce.ts)'s `dropPlayer`, and `seatAfter` /
+  `nextSeatInPlay` in [`effects.ts`](../packages/engine/src/effects.ts)). The strike count is engine
+  state, so a replay of the action log drops the same player at the same moment.
+- **Tested:** `packages/engine/test/drop.test.ts` (every case in the tables above, plus five-player
+  games that lose two players mid-flight and still finish with every card accounted for),
+  `apps/game/test/presence.test.ts` (the grace period: reload, eviction, early and duplicate alarms,
+  two tabs, the host handing over, the lobby), and a Playwright test in which a real browser closes
+  a real tab.
+
 ---
 
 ## Non-ambiguity options (plain config knobs)
@@ -296,4 +360,5 @@ change them:
 | `scoreLimit` | `500` | First to this many points wins the game. |
 | `handSize` | `7` | Cards dealt to each player at the start of a round. |
 | `turnTimeoutMs` | `30000` | How long a player has per decision before the clock forfeits it for them (#17 / D17). `0` switches the clock off. |
+| `dropAfterTimeouts` | `3` | How many decisions in a row the clock may forfeit before the player is dropped from the game (#18 / D18). `0` never drops anyone. |
 | `stackingEnabled` | `false` | Stacking Draw cards. **Confirmed NOT official** (Mattel, May 2019); off by default, available as a house rule. Tested in `test/actions.test.ts` — *"stacking is off by default"*. |

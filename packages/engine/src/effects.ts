@@ -10,6 +10,7 @@ import type {
   Card,
   CardId,
   Color,
+  Direction,
   Effect,
   EffectTarget,
   Face,
@@ -67,9 +68,37 @@ export function currentPlayer(state: GameState): Player {
   return p
 }
 
-export function seatAfter(state: GameState, from: number, steps: number): number {
+/** How many players are still in the game — the number every "N players" rule is really about. */
+export function playersInPlay(state: GameState): number {
+  let n = 0
+  for (const p of state.players) if (!p.dropped) n++
+  return n
+}
+
+/**
+ * The next seat round the table that still has somebody in it, walking the fixed seat order one
+ * way (`+1`) or the other. `from` itself is not considered, and need not be occupied — which is
+ * what makes this the right question to ask about a seat that has just emptied (D18).
+ *
+ * Returns `from` when nobody else is left; the reducer ends the game before that can matter.
+ */
+export function nextSeatInPlay(state: GameState, from: number, way: Direction): number {
   const n = state.players.length
-  return (((from + state.direction * steps) % n) + n) % n
+  for (let i = 1; i <= n; i++) {
+    const seat = (((from + way * i) % n) + n) % n
+    if (!state.players[seat]?.dropped) return seat
+  }
+  return from
+}
+
+/**
+ * The seat `steps` turns on from `from`, in the direction play is moving. A turn is only ever
+ * taken by someone still in the game, so each step passes over the seats of players who have left.
+ */
+export function seatAfter(state: GameState, from: number, steps: number): number {
+  let seat = from
+  for (let i = 0; i < steps; i++) seat = nextSeatInPlay(state, seat, state.direction)
+  return seat
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -257,15 +286,24 @@ function resolveTargets(ctx: EffectCtx, target: EffectTarget): number[] {
       return [ctx.actor]
     case 'next':
       return [seatAfter(ctx.state, ctx.actor, 1)]
+    // "Everyone" is everyone still at the table: a seat whose player has left takes no cards.
     case 'all':
-      return ctx.state.players.map((_, i) => i)
+      return seatsInPlay(ctx.state)
     case 'allOthers':
-      return ctx.state.players.map((_, i) => i).filter(i => i !== ctx.actor)
+      return seatsInPlay(ctx.state).filter(i => i !== ctx.actor)
     default: {
       const never: never = target
       throw new Error(`unknown effect target "${String(never)}"`)
     }
   }
+}
+
+function seatsInPlay(state: GameState): number[] {
+  const seats: number[] = []
+  state.players.forEach((p, i) => {
+    if (!p.dropped) seats.push(i)
+  })
+  return seats
 }
 
 function resolveColor(ctx: EffectCtx, color: Color | 'declared' | null): Color | null {
@@ -310,8 +348,9 @@ function applyEffect(ctx: EffectCtx, effect: Effect): void {
     case 'skipEveryone': {
       // Advancing by exactly `playerCount` lands back on the actor, for any player count and any
       // direction. With two players it degenerates to a plain Skip, which is the correct
-      // behaviour and needs no special case (D14).
-      ctx.extraSkips += state.players.length - 1
+      // behaviour and needs no special case (D14). The count is of players still in the game,
+      // because those are the only seats an advance stops at.
+      ctx.extraSkips += playersInPlay(state) - 1
       ctx.returnsToActor = true
       const actor = state.players[ctx.actor]
       if (actor) ctx.events.push({ t: 'skippedEveryone', by: actor.id })

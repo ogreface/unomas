@@ -225,6 +225,9 @@ describe('GameRoom — the turn clock', () => {
 
   it('forfeits the turn when the alarm fires, and tells every client why', async () => {
     const { stub, a, b } = await seatTwoAndStart('CLK4')
+    // The deal can open on a Wild — 4 cards in 112 — and then the first thing owed is a colour, not
+    // a play. This test is about a forfeited *turn*, so have the colour named before it starts.
+    if (a.latestView?.phase.t === 'awaitingColorChoice') await autoMove([a, b])
 
     const clock = await readClock(stub)
     const victim = clock!.player

@@ -56,12 +56,19 @@ export function Table({ code }: { code: string }) {
 
       <section className="table-players">
         {table.players.map(p => (
-          <div key={p.id} className={`table-player${p.id === table.turn ? ' table-player--turn' : ''}`}>
+          <div
+            key={p.id}
+            className={`table-player${p.id === table.turn ? ' table-player--turn' : ''}${p.dropped ? ' table-player--out' : ''}`}
+          >
             <div className="table-player__head">
               <span className="seat-dot" data-seat={p.seat} />
               <span className="table-player__name">{p.name}</span>
               <span className="table-player__score">{p.score}</span>
-              <span className="opponent__count">{p.handCount}</span>
+              {p.dropped ? (
+                <span className="tag tag--out">left</span>
+              ) : (
+                <span className="opponent__count">{p.handCount}</span>
+              )}
               {clock?.timer.player === p.id && <TurnClock clock={clock} label={p.name} size={32} />}
               {p.saidUno && <span className="tag tag--uno">UNO</span>}
             </div>

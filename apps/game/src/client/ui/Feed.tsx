@@ -38,7 +38,17 @@ export function describe(event: EventView, nameOf: (id: string) => string): stri
     case 'passed':
       return `${nameOf(event.player)} passed`
     case 'timedOut':
-      return `${nameOf(event.player)} ran out of time`
+      // The count is what stops the third one being a surprise: it is the strike that drops them.
+      return event.limit > 0
+        ? `${nameOf(event.player)} ran out of time (${event.strikes} of ${event.limit})`
+        : `${nameOf(event.player)} ran out of time`
+    case 'playerDropped':
+      // Two different sentences, because one of them was the player's own choice.
+      return event.reason === 'timeouts'
+        ? `${nameOf(event.player)} was dropped from the game`
+        : `${nameOf(event.player)} left the game`
+    case 'challengeVoided':
+      return `The draw is off — ${nameOf(event.challenger)} plays on`
     case 'flipped':
       return `Flipped to the ${event.side} side`
     case 'colorChosen':
