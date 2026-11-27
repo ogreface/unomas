@@ -20,7 +20,9 @@ export function Board({ room }: { room: RoomState }) {
   // One ticking clock per screen, read once and handed down — see `TurnClock.tsx`.
   const clock = useTurnClock(room.timer)
 
-  const nameOf = (id: string) => view.players.find(p => p.id === id)?.name ?? '—'
+  // Stable between views, so the game log (memoised) is not rebuilt on every tick of the clock.
+  const players = view.players
+  const nameOf = useCallback((id: string) => players.find(p => p.id === id)?.name ?? '—', [players])
   const me = view.players.find(p => p.id === view.you)
   const myTurn = view.turn === view.you
   const phase = view.phase

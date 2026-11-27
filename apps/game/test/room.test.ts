@@ -2,8 +2,10 @@ import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'c
 import { describe, expect, it } from 'vitest'
 import { CARDS_BY_ID, assertCardConservation, decideBot, seedRng, viewFor } from '@flipside/engine'
 import { BOT_CLIENT_PREFIX } from '@flipside/protocol'
+import type { GameLog, SyncMessage } from '@flipside/protocol'
 import type { EventView, GameState } from '@flipside/engine'
 import { Client, autoMove, owes, stubFor, takeTurn } from './helpers.js'
+import type { RoomStub } from './helpers.js'
 
 /** Create the room, seat two players, and return their live clients. */
 async function seatTwo(code: string): Promise<{
@@ -260,6 +262,11 @@ describe('GameRoom — spectators', () => {
   })
 })
 
+/** A log's events in order, without the per-action grouping. */
+function flatten(log: GameLog): EventView[] {
+  return log.batches.flatMap(batch => batch.events)
+}
+
 /** An event as anyone at the table may see it: what was private to one recipient, emptied. */
 function publicOnly(event: EventView): EventView {
   if (event.t === 'cardsDrawn') return { ...event, cards: [] }
@@ -276,22 +283,41 @@ describe('GameRoom — game log', () => {
     expect(a.events.some(e => e.t === 'cardsDrawn')).toBe(true)
   }
 
-  it('hands a rejoining player every event of the game so far, with nothing private in it', async () => {
+  async function rejoin(stub: RoomStub, code: string, lastSeq: number): Promise<SyncMessage> {
+    const c = await Client.connect(stub, code)
+    c.send({ t: 'join', clientId: 'client-a', nickname: 'Ann', lastSeq })
+    return c.waitFor('sync')
+  }
+
+  /** Make this room look like one dealt before the game log existed: no events, no marker. */
+  async function forgetTheLog(stub: RoomStub): Promise<void> {
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      ctx.storage.sql.exec('DELETE FROM events')
+      ctx.storage.sql.exec('DELETE FROM log_state')
+    })
+  }
+
+  async function logStatus(stub: RoomStub): Promise<string | undefined> {
+    return runInDurableObject(stub, async (_instance, ctx) => {
+      const row = ctx.storage.sql.exec('SELECT status FROM log_state WHERE id = 0').toArray()[0]
+      return row?.status as string | undefined
+    })
+  }
+
+  it('hands a fresh screen every event of the game so far, with nothing private in it', async () => {
     const { stub, a, b } = await seatTwo('GLOG')
     await startGame(a, b)
     await playUntilADraw(a, b)
 
     // From storage, not memory: the history must outlive the object that wrote it.
     await evictDurableObject(stub)
-
-    const a2 = await Client.connect(stub, 'GLOG')
-    a2.send({ t: 'join', clientId: 'client-a', nickname: 'Ann' })
-    const sync = await a2.waitFor('sync')
+    const sync = await rejoin(stub, 'GLOG', 0)
 
     // Exactly what Ann's first screen narrated, in order — minus the cards only Ann was shown.
     // A draw stays "Ann drew 2", never which two.
-    expect(sync.log).toEqual(a.events.map(publicOnly))
-    expect(sync.log.length).toBeGreaterThan(0)
+    expect(sync.log.after).toBe(0)
+    expect(flatten(sync.log)).toEqual(a.events.map(publicOnly))
+    expect(sync.log.batches.length).toBeGreaterThan(0)
   })
 
   it('gives a projector that arrives mid-game the same history', async () => {
@@ -302,7 +328,69 @@ describe('GameRoom — game log', () => {
     const s = await Client.connect(stub, 'GLOG2')
     s.send({ t: 'join', clientId: 'client-s', nickname: 'Screen', role: 'spectator' })
     const tableSync = await s.waitFor('tableSync')
-    expect(tableSync.log).toEqual(a.events.map(publicOnly))
+    expect(flatten(tableSync.log)).toEqual(a.events.map(publicOnly))
+  })
+
+  it('sends a reconnecting screen only what it missed', async () => {
+    const { stub, a, b } = await seatTwo('GLOG3')
+    await startGame(a, b)
+    for (let i = 0; i < 3; i++) await autoMove([a, b])
+    const seen = a.latestView!.seq
+    const seenCount = a.events.length
+    for (let i = 0; i < 3; i++) await autoMove([a, b])
+
+    const sync = await rejoin(stub, 'GLOG3', seen)
+    expect(sync.log.after).toBe(seen)
+    expect(sync.log.batches.every(batch => batch.seq > seen)).toBe(true)
+    expect(flatten(sync.log)).toEqual(a.events.slice(seenCount).map(publicOnly))
+  })
+
+  it('sends the whole game to a screen whose last sequence is not from this game', async () => {
+    const { stub, a, b } = await seatTwo('GLOG4')
+    await startGame(a, b)
+    await autoMove([a, b])
+
+    const sync = await rejoin(stub, 'GLOG4', 10_000)
+    expect(sync.log.after).toBe(0)
+    expect(flatten(sync.log)).toEqual(a.events.map(publicOnly))
+  })
+
+  it('rebuilds the history of a game dealt before the log existed, by replaying its actions', async () => {
+    const { stub, a, b } = await seatTwo('GLOG5')
+    await startGame(a, b)
+    await playUntilADraw(a, b)
+    await forgetTheLog(stub)
+
+    // The next time the object wakes, it notices and replays the action log once.
+    await evictDurableObject(stub)
+    const sync = await rejoin(stub, 'GLOG5', 0)
+    expect(flatten(sync.log)).toEqual(a.events.map(publicOnly))
+    expect(await logStatus(stub)).toBe('complete')
+  })
+
+  it('keeps the game going, and stops retrying, when a replay does not reproduce the game', async () => {
+    const { stub, a, b } = await seatTwo('GLOG6')
+    await startGame(a, b)
+    await playUntilADraw(a, b)
+    await forgetTheLog(stub)
+    // An action the engine will refuse — as if the rules had changed since the game was dealt.
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      ctx.storage.sql.exec(
+        `UPDATE actions SET action = '{"type":"pass","player":"nobody"}' WHERE seq = (SELECT MAX(seq) FROM actions)`,
+      )
+    })
+
+    await evictDurableObject(stub)
+    const sync = await rejoin(stub, 'GLOG6', 0)
+    // An unverifiable history is not served as if it were the game; what was stored is.
+    expect(sync.log.batches).toEqual([])
+    expect(await logStatus(stub)).toBe('partial')
+
+    // …and the table plays on, logging from here.
+    const before = a.events.length
+    expect(await autoMove([a, b])).toBe(true)
+    const later = await rejoin(stub, 'GLOG6', 0)
+    expect(flatten(later.log)).toEqual(a.events.slice(before).map(publicOnly))
   })
 })
 

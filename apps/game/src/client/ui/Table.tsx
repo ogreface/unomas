@@ -15,7 +15,9 @@ import { TurnClock, useTurnClock } from './TurnClock.js'
 export function Table({ code }: { code: string }) {
   const room = useRoom({ code, role: 'spectator', nickname: 'Table', enabled: true })
   const table = room.table
-  const nameOf = (id: string) => table?.players.find(p => p.id === id)?.name ?? '—'
+  // Stable between snapshots, so the game log (memoised) is not rebuilt on every tick of the clock.
+  const players = table?.players
+  const nameOf = useCallback((id: string) => players?.find(p => p.id === id)?.name ?? '—', [players])
   const clock = useTurnClock(room.timer)
   const [logOpen, setLogOpen] = useState(false)
   const closeLog = useCallback(() => setLogOpen(false), [])

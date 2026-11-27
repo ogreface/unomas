@@ -77,7 +77,9 @@ import {
 import type {
   ClientMessage,
   ConnectRole,
+  GameLog,
   LobbyPlayer,
+  LogBatch,
   ServerMessage,
   TimerView,
 } from '@flipside/protocol'
@@ -189,6 +191,38 @@ function timeoutMs(state: GameState): number {
   return Math.max(0, ms)
 }
 
+/**
+ * Rebuild a game's log by replaying its action log from the deal — for a game dealt before the log
+ * existed. Returns null unless the replay lands on exactly the stored snapshot: a history that
+ * cannot be shown to be this game's is not served as if it were. (It would not be, if the rules had
+ * changed since the deal; the comparison is what catches that.)
+ */
+async function replayLog(
+  room: RoomRow,
+  snapshotJson: string,
+  actions: Array<{ seq: number; action: string }>,
+): Promise<LogBatch[] | null> {
+  try {
+    const final = JSON.parse(snapshotJson) as GameState
+    let state = await ruleHost.createGame({
+      packId: room.pack_id,
+      players: [...final.players].sort((x, y) => x.seat - y.seat).map(p => ({ id: p.id, name: p.name })),
+      seed: room.seed,
+      options: final.options,
+    })
+    const batches: LogBatch[] = []
+    for (const row of actions) {
+      const result = await ruleHost.reduce(state, JSON.parse(row.action) as Action)
+      if (!result.ok || result.state.seq !== row.seq) return null
+      state = result.state
+      batches.push({ seq: row.seq, events: redactEvents(state, result.events, SPECTATOR_RECIPIENT) })
+    }
+    return JSON.stringify(state) === snapshotJson ? batches : null
+  } catch {
+    return null
+  }
+}
+
 /** The bot-only half of a seat. A `players` row exists alongside every one of these. */
 interface BotRow {
   player_id: string
@@ -204,6 +238,15 @@ export class GameRoom extends DurableObject<Env> {
     super(ctx, env)
     this.sql = ctx.storage.sql
     this.#ensureSchema()
+    // A game dealt before the game log existed is missing its history. Rebuild it before this object
+    // handles anything else; on every other wake this is one indexed lookup.
+    void ctx.blockConcurrencyWhile(async () => {
+      try {
+        await this.#backfillLog()
+      } catch (err) {
+        console.error('game log: rebuild failed', err)
+      }
+    })
     // Heartbeats keep the socket alive without waking the object out of hibernation.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'))
   }
@@ -239,6 +282,13 @@ export class GameRoom extends DurableObject<Env> {
         idx INTEGER NOT NULL,
         event TEXT NOT NULL,
         PRIMARY KEY (seq, idx)
+      );
+      -- Whether the events table holds the whole game ('complete') or only the part since the log
+      -- shipped ('partial', a game dealt before it whose replay did not reproduce the snapshot). No
+      -- row on a started game means nobody has checked yet: see #backfillLog.
+      CREATE TABLE IF NOT EXISTS log_state (
+        id INTEGER PRIMARY KEY CHECK (id = 0),
+        status TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS snapshot (
         id INTEGER PRIMARY KEY CHECK (id = 0),
@@ -321,7 +371,7 @@ export class GameRoom extends DurableObject<Env> {
 
     if (msg.t === 'resync') {
       await this.#reassertAlarm()
-      return this.#sendCurrent(ws, att)
+      return this.#sendCurrent(ws, att, msg.lastSeq)
     }
     if (msg.t === 'start') return this.#onStart(ws, att)
     if (msg.t === 'addBot') return this.#onAddBot(ws, att, msg.difficulty)
@@ -390,7 +440,7 @@ export class GameRoom extends DurableObject<Env> {
       }
       ws.serializeAttachment(att)
       this.#sendWelcome(ws, att)
-      this.#sendCurrent(ws, att)
+      this.#sendCurrent(ws, att, msg.lastSeq)
       return
     }
 
@@ -418,7 +468,7 @@ export class GameRoom extends DurableObject<Env> {
       // Note: we do *not* close the player's other sockets. A player may hold several at once
       // (multiple devices/tabs); each is a valid mirror and all receive the same broadcasts.
       this.#sendWelcome(ws, att)
-      this.#sendCurrent(ws, att)
+      this.#sendCurrent(ws, att, msg.lastSeq)
       this.#broadcastRoster()
       return
     }
@@ -513,6 +563,8 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     this.sql.exec('UPDATE room SET started = 1 WHERE id = 0')
+    // Dealt with the game log in place, so it is whole from the first event: nothing to rebuild.
+    this.sql.exec("INSERT OR REPLACE INTO log_state (id, status) VALUES (0, 'complete')")
     this.#persist(started.state, { type: 'startRound' }, started.events)
     // The deal can hand the first turn straight to a bot, or start a human's clock, so arming is
     // not only a post-action concern.
@@ -1054,8 +1106,11 @@ export class GameRoom extends DurableObject<Env> {
     })
   }
 
-  /** Bring one socket fully up to date: the in-game snapshot if there is one, else the lobby roster. */
-  #sendCurrent(ws: WebSocket, att: Attachment): void {
+  /**
+   * Bring one socket fully up to date: the in-game snapshot if there is one, else the lobby roster.
+   * `lastSeq` is how far the screen says it already got, so its game log is sent only what it missed.
+   */
+  #sendCurrent(ws: WebSocket, att: Attachment, lastSeq: number): void {
     const snap = this.#snapshot()
     if (!snap) {
       const room = this.#room()
@@ -1067,7 +1122,7 @@ export class GameRoom extends DurableObject<Env> {
       return
     }
     const timer = this.#timerView()
-    const log = this.#log()
+    const log = this.#log(lastSeq, snap.seq)
     if (att.role === 'spectator') {
       this.#send(ws, { t: 'tableSync', table: tableView(snap.state), timer, log })
     } else {
@@ -1088,35 +1143,81 @@ export class GameRoom extends DurableObject<Env> {
   // -------------------------------------------------------------------------------------------
 
   #persist(state: GameState, action: Action, events: GameEvent[]): void {
-    this.sql.exec(
-      'INSERT OR REPLACE INTO snapshot (id, seq, state) VALUES (0, ?, ?)',
-      state.seq,
-      JSON.stringify(state),
-    )
-    this.sql.exec(
-      'INSERT OR IGNORE INTO actions (seq, action, ts) VALUES (?, ?, ?)',
-      state.seq,
-      JSON.stringify(action),
-      Date.now(),
-    )
-    // Redacted for the spectator, which is exactly "what everyone may see" — one list that is safe
-    // to replay to any recipient, the projector included.
-    redactEvents(state, events, SPECTATOR_RECIPIENT).forEach((event, idx) => {
+    // The game log's copy is redacted for the spectator, which is exactly "what everyone may see":
+    // one list that is safe to replay to any recipient, the projector included. Redact before
+    // writing anything — it throws on a card with no alias, and if that ever happens the move must
+    // still be saved, clocked and broadcast. A missing line in the log is the lesser harm.
+    let logged: EventView[] = []
+    try {
+      logged = redactEvents(state, events, SPECTATOR_RECIPIENT)
+    } catch (err) {
+      console.error(`game log: could not record the events of seq ${state.seq}`, err)
+    }
+    this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        'INSERT OR IGNORE INTO events (seq, idx, event) VALUES (?, ?, ?)',
+        'INSERT OR REPLACE INTO snapshot (id, seq, state) VALUES (0, ?, ?)',
         state.seq,
-        idx,
-        JSON.stringify(event),
+        JSON.stringify(state),
       )
+      this.sql.exec(
+        'INSERT OR IGNORE INTO actions (seq, action, ts) VALUES (?, ?, ?)',
+        state.seq,
+        JSON.stringify(action),
+        Date.now(),
+      )
+      this.#insertLogBatch(state.seq, logged)
     })
   }
 
-  /** The whole game log, oldest first. */
-  #log(): EventView[] {
-    return this.sql
-      .exec('SELECT event FROM events ORDER BY seq, idx')
-      .toArray()
-      .map(row => JSON.parse(row.event as string) as EventView)
+  #insertLogBatch(seq: number, events: readonly EventView[]): void {
+    events.forEach((event, idx) => {
+      this.sql.exec('INSERT OR IGNORE INTO events (seq, idx, event) VALUES (?, ?, ?)', seq, idx, JSON.stringify(event))
+    })
+  }
+
+  /**
+   * The game log after `lastSeq`: what a screen that has seen up to there is missing. A `lastSeq`
+   * past the game's own — a screen remembering some other game — is sent the whole log instead.
+   */
+  #log(lastSeq: number, currentSeq: number): GameLog {
+    const after = lastSeq <= currentSeq ? lastSeq : 0
+    const rows = this.sql
+      .exec('SELECT seq, event FROM events WHERE seq > ? ORDER BY seq, idx', after)
+      .toArray() as Array<{ seq: number; event: string }>
+    const batches: LogBatch[] = []
+    for (const row of rows) {
+      const event = JSON.parse(row.event) as EventView
+      const last = batches[batches.length - 1]
+      if (last?.seq === row.seq) last.events.push(event)
+      else batches.push({ seq: row.seq, events: [event] })
+    }
+    return { after, batches }
+  }
+
+  /**
+   * A game dealt before the log existed has no history for the moves before it shipped. Rebuild it
+   * once, the first time the object wakes: replay the action log from the deal and keep the result
+   * only if it lands on exactly the stored snapshot. The outcome is recorded either way, so a game
+   * that cannot be replayed is not replayed again on every wake — it simply logs from here on.
+   */
+  async #backfillLog(): Promise<void> {
+    const room = this.#room()
+    if (!room?.started) return
+    if (this.sql.exec('SELECT 1 FROM log_state WHERE id = 0').toArray().length > 0) return
+    const snap = this.sql.exec('SELECT seq, state FROM snapshot WHERE id = 0').toArray()[0] as
+      | { seq: number; state: string }
+      | undefined
+    if (!snap) return
+    const actions = this.sql
+      .exec('SELECT seq, action FROM actions WHERE seq <= ? ORDER BY seq', snap.seq)
+      .toArray() as Array<{ seq: number; action: string }>
+
+    const batches = await replayLog(room, snap.state, actions)
+    this.ctx.storage.transactionSync(() => {
+      for (const batch of batches ?? []) this.#insertLogBatch(batch.seq, batch.events)
+      this.sql.exec('INSERT OR REPLACE INTO log_state (id, status) VALUES (0, ?)', batches ? 'complete' : 'partial')
+    })
+    if (!batches) console.warn(`game log: room ${room.code} could not be replayed; its log starts partway through`)
   }
 
   #snapshot(): { seq: number; state: GameState } | null {

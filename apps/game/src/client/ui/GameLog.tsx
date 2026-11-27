@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import type { Color, EventView } from '@flipside/engine'
+import type { LogBatch } from '@flipside/protocol'
 import { describe } from './Feed.js'
 
 const LOG_ID = 'game-log'
@@ -10,7 +11,9 @@ export function GameLogToggle({ open, onToggle }: { open: boolean; onToggle: () 
     <button
       className="btn btn--ghost btn--tiny log-toggle"
       aria-expanded={open}
-      aria-controls={LOG_ID}
+      // Only while the drawer is mounted: pointing at an id that is not in the page is worse than
+      // pointing at nothing.
+      aria-controls={open ? LOG_ID : undefined}
       onClick={onToggle}
     >
       Log
@@ -25,20 +28,29 @@ export function GameLogToggle({ open, onToggle }: { open: boolean; onToggle: () 
  *
  * Deliberately not modal: there is no backdrop, so on a wide screen a player can leave it open
  * and keep playing beside it. It sticks to the newest line unless you have scrolled up to read.
+ *
+ * Memoised, and its callers hand it stable props: the board re-renders five times a second while
+ * the turn clock runs, and a long game is thousands of lines that need not be rebuilt each time.
  */
-export function GameLog({
+export const GameLog = memo(function GameLog({
   log,
   nameOf,
   onClose,
 }: {
-  log: EventView[]
+  log: LogBatch[]
   nameOf: (id: string) => string
   onClose: () => void
 }) {
-  const entries = log.flatMap((event, i) => {
-    const text = describe(event, nameOf)
-    return text === null ? [] : [{ i, event, text }]
-  })
+  const entries = useMemo(
+    () =>
+      log.flatMap(batch =>
+        batch.events.flatMap((event, idx) => {
+          const text = describe(event, nameOf)
+          return text === null ? [] : [{ key: `${batch.seq}:${idx}`, event, text }]
+        }),
+      ),
+    [log, nameOf],
+  )
 
   const listRef = useRef<HTMLOListElement>(null)
   const pinned = useRef(true)
@@ -84,10 +96,10 @@ export function GameLog({
         }}
       >
         {entries.length === 0 && <li className="log__empty muted">Nothing has happened yet.</li>}
-        {entries.map(({ i, event, text }) => {
+        {entries.map(({ key, event, text }) => {
           const color = colorOf(event)
           return (
-            <li key={i} className={`log__entry log__entry--${event.t}`}>
+            <li key={key} className={`log__entry log__entry--${event.t}`}>
               <span
                 className="log__pip"
                 style={color ? { background: `var(--ink-${color})` } : undefined}
@@ -100,7 +112,7 @@ export function GameLog({
       </ol>
     </aside>
   )
-}
+})
 
 /**
  * The colour a line is about, if it is about one, for a dot beside it. A wild gets none: the colour

@@ -714,7 +714,9 @@ input {
 /* ── game log drawer ──────────────────────────────────────────────────────────────────────── */
 /*
  * Above the toasts, below the colour picker and the round-over panel, so it never sits on top of a
- * decision the game is waiting for. No backdrop: on a wide screen you can leave it open and play.
+ * decision the game is waiting for — and below the "Reconnecting…" banner, which it starts beneath
+ * while that is up, so a dropped link is never hidden and the close button stays in reach. No
+ * backdrop: on a wide screen you can leave it open and play.
  */
 .log {
   position: fixed;
@@ -722,7 +724,7 @@ input {
   right: 0;
   bottom: 0;
   width: min(340px, 88vw);
-  z-index: 40;
+  z-index: 38;
   display: flex;
   flex-direction: column;
   background: var(--panel);
@@ -796,6 +798,10 @@ input {
 .log__entry--unoPenalty,
 .log__entry--timedOut {
   color: var(--warn);
+}
+/* The banner is one 13px line with 6px of padding either side. */
+.conn-banner + .board .log {
+  top: 31px;
 }
 .table-head .log-toggle {
   margin-left: auto;
