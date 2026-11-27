@@ -1,4 +1,4 @@
-import { otherSide } from '@flipside/engine'
+import { otherSide, playerToActInView } from '@flipside/engine'
 import { useRoom } from '../net/useRoom.js'
 import { Card } from './Card.js'
 import { Feed } from './Feed.js'
@@ -30,6 +30,9 @@ export function Table({ code }: { code: string }) {
   }
 
   const inactive = otherSide(table.side)
+  // The highlighted seat is whoever the table is waiting on, which a challenge makes somebody other
+  // than the player at the turn — the same reading the clock is armed from.
+  const toAct = playerToActInView(table)
 
   return (
     <main className="table-screen" data-side={table.side}>
@@ -58,7 +61,7 @@ export function Table({ code }: { code: string }) {
         {table.players.map(p => (
           <div
             key={p.id}
-            className={`table-player${p.id === table.turn ? ' table-player--turn' : ''}${p.dropped ? ' table-player--out' : ''}`}
+            className={`table-player${p.id === toAct ? ' table-player--turn' : ''}${p.dropped ? ' table-player--out' : ''}`}
           >
             <div className="table-player__head">
               <span className="seat-dot" data-seat={p.seat} />

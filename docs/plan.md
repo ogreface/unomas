@@ -211,8 +211,8 @@ production-only bugs.
 
 ## Stage 2 — Feel
 
-~~Turn timers~~ · sound · spectators · ~~reconnection grace~~ · house-rule toggles (stacking, 7-0,
-draw-to-match, jump-in) · ✅ **computer players** · ✅ **turn clock** · ✅ **leaving the table** ·
+~~Turn timers~~ · ✅ **sound** · spectators · ~~reconnection grace~~ · house-rule toggles (stacking,
+7-0, draw-to-match, jump-in) · ✅ **computer players** · ✅ **turn clock** · ✅ **leaving the table** ·
 animation polish · full a11y pass (every card is a `<button>`; the whole game is keyboard- and
 screen-reader-playable).
 
@@ -264,7 +264,24 @@ it for whichever is due first, and the handler runs both errands. A bot seat is 
 it is driven, so the clock's job there is only to stop a stuck room, not to punish a player who is
 not there.
 
-### 2.3 Leaving the table — done
+### 2.3 Sound — done
+
+Five small cues, each a nudge for the person holding *that* phone, who is on a call and probably
+looking at a face rather than the cards: a chime when the game starts waiting on **you** (your turn,
+or a colour or challenge you owe), a run up a chord when **anybody** calls UNO, a two-beep warning
+as **your** clock turns red at ten seconds and a tick for each of its last five, and a fanfare when
+the game ends. Somebody else's clock running down is silent — the whole table can already see it.
+
+They are synthesized with Web Audio rather than shipped as files, for the same reason the cards are
+SVG. *When* to play is a pure function of view → view and clock reading → clock reading
+(`apps/game/src/client/lib/cues.ts`), so "exactly once, at exactly that moment" is unit-tested; the
+noise is `lib/sound.ts`. The audio is woken from the first tap on the page (browsers allow nothing
+sooner), and a cue that cannot play when it happens is dropped rather than queued, so a phone back
+from the background never plays a burst of stale chimes. A speaker button on the top bar mutes it,
+remembered per device. The projected table view is silent: it is a picture for the call, and its
+audio would double everybody's own.
+
+### 2.4 Leaving the table — done
 
 The turn clock stops one absent player from stalling a table; it does not stop them costing it
 thirty seconds a lap for the rest of the evening. So a player who has gone is dropped from the game

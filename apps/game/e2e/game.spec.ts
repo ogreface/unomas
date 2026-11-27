@@ -209,6 +209,83 @@ test('everyone watches the same countdown, and a player who vanishes does not st
   await ctxT.close()
 })
 
+/**
+ * Records the pitch of every note the page plays, on the browser's real Web Audio — the sounds are
+ * synthesized, so a note is an oscillator and its pitch says which cue it belongs to: the turn
+ * chime is 659 Hz then 988, the ten-second warning is two beeps at 880, a clock tick is 1800.
+ */
+function listenToSounds() {
+  const heard: number[] = []
+  ;(window as unknown as { __heard: number[] }).__heard = heard
+  const create = AudioContext.prototype.createOscillator
+  AudioContext.prototype.createOscillator = function (this: AudioContext) {
+    const osc = create.call(this)
+    const set = osc.frequency.setValueAtTime.bind(osc.frequency)
+    osc.frequency.setValueAtTime = (value: number, time: number) => {
+      heard.push(Math.round(value))
+      return set(value, time)
+    }
+    return osc
+  }
+}
+
+const TURN_CHIME = [659, 988]
+const HURRY = 880
+const TICK = 1800
+
+async function heard(page: Page): Promise<number[]> {
+  return page.evaluate(() => (window as unknown as { __heard: number[] }).__heard)
+}
+
+test('the player on move hears it: a chime as the turn arrives, then the clock running out', async ({
+  browser,
+}) => {
+  // Waits out most of a real 30-second clock, on purpose.
+  test.setTimeout(120_000)
+  const ctxA = await browser.newContext()
+  const ctxB = await browser.newContext()
+  await ctxA.addInitScript(listenToSounds)
+  await ctxB.addInitScript(listenToSounds)
+  const a = await ctxA.newPage()
+  const b = await ctxB.newPage()
+
+  const code = await createRoom(a, 'Ann')
+  await joinRoom(b, 'Bo', code)
+  await expect(a.locator('.roster li')).toHaveCount(2)
+  await a.getByRole('button', { name: /Start game/ }).click()
+  await expect(a.locator('.board')).toBeVisible()
+  await expect(b.locator('.board')).toBeVisible()
+
+  // Whoever the deal puts on move hears the chime; the other player hears nothing.
+  const label = (page: Page) => page.locator('.turn-label').textContent()
+  await expect.poll(async () => [await label(a), await label(b)]).toContain('Your turn')
+  const [first, second] = (await label(a)) === 'Your turn' ? [a, b] : [b, a]
+  await expect.poll(() => heard(first)).toEqual(TURN_CHIME)
+  expect(await heard(second)).toEqual([])
+
+  // They take their turn by drawing — always legal — and the chime moves with it.
+  const swatch = first.locator('.overlay .swatch').first()
+  if (await swatch.isVisible()) await swatch.click() // the deal opened on a wild: name a colour first
+  await first.locator('.pile__stack--live').click()
+  await expect(first.locator('.pile__stack--live')).toHaveCount(0)
+  // A drawn card that can be played holds the turn for a choice; one that cannot passes it at once.
+  const pass = first.getByRole('button', { name: 'Pass', exact: true })
+  if (await pass.isVisible()) await pass.click()
+  await expect(second.locator('.turn-label')).toHaveText('Your turn')
+  await expect.poll(() => heard(second)).toEqual(TURN_CHIME)
+  expect(await heard(first)).toEqual(TURN_CHIME)
+
+  // Now nobody touches anything. The second player's clock warns them as it turns red, then ticks
+  // down the last five seconds — and the first player, who is not on the clock, hears none of it.
+  await expect
+    .poll(() => heard(second), { timeout: 40_000 })
+    .toEqual([...TURN_CHIME, HURRY, HURRY, TICK, TICK, TICK, TICK, TICK])
+  expect((await heard(first)).filter(f => f === HURRY || f === TICK)).toEqual([])
+
+  await ctxA.close()
+  await ctxB.close()
+})
+
 test('a tab closed by accident and reopened inside ten seconds keeps its seat', async ({ browser }) => {
   const ctxA = await browser.newContext()
   const ctxB = await browser.newContext()

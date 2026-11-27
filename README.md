@@ -138,5 +138,9 @@ draw pile, their seat stays on the board marked as empty and the turn passes ove
 player left wins. [Decisions #18](docs/decisions.md) has the ruling, including what happens to a
 wild draw whose player walks out before it is answered; `dropAfterTimeouts` is the knob.
 
-**300 unit/integration tests + 8 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
-Still to come in Stage 2: sound, house-rule toggles, and the full a11y pass.
+Each phone also makes a little noise at the moments that matter to its player: their turn arriving,
+anybody calling UNO, their own clock running out, and the end of the game — muted from the speaker
+button on the top bar. See [the plan, §2.3](docs/plan.md#23-sound--done).
+
+**350 unit/integration tests + 9 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+Still to come in Stage 2: house-rule toggles, and the full a11y pass.
