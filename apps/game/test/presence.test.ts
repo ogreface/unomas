@@ -441,6 +441,26 @@ describe('GameRoom — closing the tab mid-game', () => {
     expect(await absences(stub)).toEqual([])
   })
 
+  it('writes the drop into the game log, so a screen that arrives later can read why the seat is empty', async () => {
+    const { stub, clients, ids } = await seatAndStart('GOND', 3)
+    await walkAway(stub, clients[1]!, ids[1]!)
+    await expireGrace(stub)
+    await runDurableObjectAlarm(stub)
+
+    // A fresh page — the projector, say — joins with no history and is sent the whole game.
+    const screen = await Client.connect(stub, 'GOND')
+    screen.send({ t: 'join', clientId: 'client-screen-xx', nickname: 'Table', role: 'spectator' })
+    await screen.waitFor('welcome')
+    const sync = await screen.waitFor('tableSync')
+
+    const logged = sync.log.batches.flatMap(batch => batch.events)
+    expect(logged.find(e => e.t === 'playerDropped')).toMatchObject({ player: ids[1], reason: 'disconnected' })
+    // …as the last thing that happened, at the sequence number the drop was saved under.
+    const state = await readState(stub)
+    expect(sync.log.batches.at(-1)).toMatchObject({ seq: state.seq })
+    expect(sync.log.batches.at(-1)?.events.some(e => e.t === 'playerDropped')).toBe(true)
+  })
+
   it('hands the deal to the next player when the host is dropped, and tells every screen', async () => {
     const { stub, clients, ids } = await seatAndStart('GONA', 3)
     const [a, b, c] = clients as [Client, Client, Client]

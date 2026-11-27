@@ -1,20 +1,29 @@
+import { useCallback, useState } from 'react'
 import { otherSide, playerToActInView } from '@flipside/engine'
 import { useRoom } from '../net/useRoom.js'
 import { Card } from './Card.js'
 import { Feed } from './Feed.js'
+import { GameLog, GameLogToggle } from './GameLog.js'
 import { SideBadge } from './SideBadge.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
+import { NextFlag, TurnOrder } from './TurnOrder.js'
+import { upNext } from '../lib/turnOrder.js'
 
 /**
  * The table view — read-only, built for a shared screen on the call. Deliberately *not* a player's
- * view: it shows only what is on the table (piles, turn order, hand counts) plus the dark faces
- * everyone can already see. It never reveals a hand's active faces, so it is safe to project.
+ * view: it shows only what is on the table (piles, turn order and direction, hand counts) plus the
+ * dark faces everyone can already see. It never reveals a hand's active faces, so it is safe to
+ * project.
  */
 export function Table({ code }: { code: string }) {
   const room = useRoom({ code, role: 'spectator', nickname: 'Table', enabled: true })
   const table = room.table
-  const nameOf = (id: string) => table?.players.find(p => p.id === id)?.name ?? '—'
+  // Stable between snapshots, so the game log (memoised) is not rebuilt on every tick of the clock.
+  const players = table?.players
+  const nameOf = useCallback((id: string) => players?.find(p => p.id === id)?.name ?? '—', [players])
   const clock = useTurnClock(room.timer)
+  const [logOpen, setLogOpen] = useState(false)
+  const closeLog = useCallback(() => setLogOpen(false), [])
 
   if (!table) {
     return (
@@ -33,13 +42,13 @@ export function Table({ code }: { code: string }) {
   // The highlighted seat is whoever the table is waiting on, which a challenge makes somebody other
   // than the player at the turn — the same reading the clock is armed from.
   const toAct = playerToActInView(table)
+  const next = upNext(table)
 
   return (
     <main className="table-screen" data-side={table.side}>
       <header className="table-head">
         <span className="room-code">{code}</span>
         <SideBadge side={table.side} />
-        <span className="dir">{table.direction === 1 ? '↻' : '↺'}</span>
         {table.activeColor && (
           <span className="active-color-tag" title="The colour in play right now">
             <span
@@ -55,14 +64,21 @@ export function Table({ code }: { code: string }) {
             <span className="table-clock__who">{nameOf(clock.timer.player)} to move</span>
           </span>
         )}
+        <GameLogToggle open={logOpen} onToggle={() => setLogOpen(open => !open)} />
       </header>
 
-      <section className="table-players">
-        {table.players.map(p => (
+      <TurnOrder
+        players={table.players}
+        direction={table.direction}
+        toAct={toAct}
+        next={next}
+        className="table-players"
+      >
+        {p => (
           <div
-            key={p.id}
-            className={`table-player${p.id === toAct ? ' table-player--turn' : ''}${p.dropped ? ' table-player--out' : ''}`}
+            className={`table-player${p.id === toAct ? ' table-player--turn' : ''}${p.id === next ? ' table-player--next' : ''}${p.dropped ? ' table-player--out' : ''}`}
           >
+            {p.id === next && <NextFlag />}
             <div className="table-player__head">
               <span className="seat-dot" data-seat={p.seat} />
               <span className="table-player__name">{p.name}</span>
@@ -70,12 +86,12 @@ export function Table({ code }: { code: string }) {
               {p.dropped ? (
                 <span className="tag tag--out">left</span>
               ) : (
-                <span className="opponent__count">{p.handCount}</span>
+                <span className="seat__count">{p.handCount}</span>
               )}
               {clock?.timer.player === p.id && <TurnClock clock={clock} label={p.name} size={32} />}
               {p.saidUno && <span className="tag tag--uno">UNO</span>}
             </div>
-            <div className="opponent__hand">
+            <div className="seat__hand">
               {p.visible.map((c, i) => (
                 <span key={c.key || i} className="mini-card" style={{ marginLeft: i === 0 ? 0 : -20 }}>
                   <Card face={c.face} side={inactive} width={40} />
@@ -83,8 +99,8 @@ export function Table({ code }: { code: string }) {
               ))}
             </div>
           </div>
-        ))}
-      </section>
+        )}
+      </TurnOrder>
 
       <section className="table-center">
         <div className="pile">
@@ -102,6 +118,7 @@ export function Table({ code }: { code: string }) {
       </section>
 
       <Feed feed={room.feed} nameOf={nameOf} />
+      {logOpen && <GameLog log={room.log} nameOf={nameOf} onClose={closeLog} />}
     </main>
   )
 }

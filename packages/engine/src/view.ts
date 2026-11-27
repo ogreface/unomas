@@ -278,12 +278,13 @@ export function redactEvent(state: GameState, event: GameEvent, recipient: Playe
       }
 
     case 'cardPlayed':
-      // A played card is face-up on the table: public, on the active side.
+      // A played card is face-up on the table: public, on the side it was played on — which, for a
+      // Flip, is no longer `state.side` by the time this runs.
       return {
         t: 'cardPlayed',
         player: event.player,
         card: keyOf(state, event.card),
-        face: { ...faceOn(cards, event.card, state.side) },
+        face: { ...faceOn(cards, event.card, event.side) },
         declaredColor: event.declaredColor,
       }
 

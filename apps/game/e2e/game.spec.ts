@@ -74,8 +74,8 @@ test('two players finish a real round together', async ({ browser }) => {
   expect(await a.locator('.hand .card').count()).toBeGreaterThanOrEqual(7)
 
   // The inverted-information channel is visible on screen: each player sees the *other's* cards but
-  // renders none of their own in the opponent strip.
-  expect(await a.locator('.opponent .mini-card').count()).toBeGreaterThanOrEqual(7)
+  // renders none of their own in the seat strip.
+  expect(await a.locator('.seat .mini-card').count()).toBeGreaterThanOrEqual(7)
 
   // Auto-play first-legal-card until a round completes on either screen.
   let sawEnd = false
@@ -156,6 +156,49 @@ test('the table view projects a live game without leaking a hand', async ({ brow
   await table.close()
 })
 
+test('the game log holds the whole game, and comes back whole after a reload', async ({ browser }) => {
+  const ctxA = await browser.newContext()
+  const ctxB = await browser.newContext()
+  const a = await ctxA.newPage()
+  const b = await ctxB.newPage()
+
+  const code = await createRoom(a, 'Ann')
+  await joinRoom(b, 'Bo', code)
+  await expect(a.locator('.roster li')).toHaveCount(2)
+  await a.getByRole('button', { name: /Start game/ }).click()
+  await expect(a.locator('.board')).toBeVisible()
+  await expect(b.locator('.board')).toBeVisible()
+
+  // A few moves, so there is more to the game than the deal.
+  for (let moves = 0, i = 0; moves < 4 && i < 40; i++) {
+    if ((await act(a)) || (await act(b))) moves++
+    await a.waitForTimeout(150)
+  }
+
+  // Closed until somebody asks for it.
+  const log = b.getByRole('complementary', { name: 'Game log' })
+  const entries = log.locator('.log__entry')
+  await expect(log).toHaveCount(0)
+  await b.getByRole('button', { name: 'Log', exact: true }).click()
+  await expect(log).toBeVisible()
+  await expect(entries.first()).toContainText('Round 1')
+  const before = await entries.count()
+  expect(before).toBeGreaterThan(1)
+
+  // A reload is a fresh connection with nothing in memory, so the history has to come from the room.
+  await b.reload()
+  await expect(b.locator('.board')).toBeVisible()
+  await b.getByRole('button', { name: 'Log', exact: true }).click()
+  await expect(entries.first()).toContainText('Round 1')
+  expect(await entries.count()).toBeGreaterThanOrEqual(before)
+
+  await b.keyboard.press('Escape')
+  await expect(log).toHaveCount(0)
+
+  await ctxA.close()
+  await ctxB.close()
+})
+
 test('everyone watches the same countdown, and a player who vanishes does not stall the table', async ({
   browser,
 }) => {
@@ -191,8 +234,8 @@ test('everyone watches the same countdown, and a player who vanishes does not st
   // Exactly one of the two boards hangs the clock on an *opponent* tile — the player whose turn it
   // is not sees it on the person they are waiting for.
   const onAnOpponent =
-    (await a.locator('.opponent .turn-clock').count()) +
-    (await b.locator('.opponent .turn-clock').count())
+    (await a.locator('.seat .turn-clock').count()) +
+    (await b.locator('.seat .turn-clock').count())
   expect(onAnOpponent).toBe(1)
 
   // Now nobody touches anything, as though whoever is up has walked away from the call. The server's
@@ -312,7 +355,7 @@ test('a tab closed by accident and reopened inside ten seconds keeps its seat', 
   await expect(reopened.locator('.hand__slot')).toHaveCount(dealt)
   await expect(reopened.locator('.out-banner')).toHaveCount(0)
   await expect(a.locator('.toast--playerDropped')).toHaveCount(0)
-  await expect(a.locator('.opponent--out')).toHaveCount(0)
+  await expect(a.locator('.seat--out')).toHaveCount(0)
   await expect(a.locator('.endgame')).toHaveCount(0)
 
   await ctxA.close()
@@ -342,9 +385,11 @@ test('a player who closes their tab is dropped, and the table plays on without t
   for (const page of [a, b]) {
     await expect(page.locator('.toast--playerDropped')).toContainText('Cy left the game', { timeout: 30_000 })
     // The seat is still on the board, marked, rather than the table silently rearranging itself.
-    await expect(page.locator('.opponent--out')).toContainText('Cy')
-    await expect(page.locator('.opponent--out .tag--out')).toHaveText('left')
-    await expect(page.locator('.opponent')).toHaveCount(2)
+    await expect(page.locator('.seat--out')).toContainText('Cy')
+    await expect(page.locator('.seat--out .tag--out')).toHaveText('left')
+    await expect(page.locator('.seat')).toHaveCount(3)
+    // Whoever is up, the seat flagged as next is one that still has somebody in it.
+    await expect(page.locator('.seat--out.seat--next')).toHaveCount(0)
   }
   // Two players are left, so there is still a game.
   await expect(a.locator('.endgame')).toHaveCount(0)
@@ -356,7 +401,8 @@ test('a player who closes their tab is dropped, and the table plays on without t
   await back.goto(`/r/${code}`)
   await expect(back.locator('.out-banner')).toContainText('You were away too long')
   await expect(back.locator('.hand')).toHaveCount(0)
-  await expect(back.locator('.opponent')).toHaveCount(2)
+  await expect(back.locator('.seat')).toHaveCount(3)
+  await expect(back.locator('.seat--you.seat--out .tag--out')).toHaveText('left')
 
   // Then Bo goes as well. One player left is not a game, so it is Ann's — and the screen says why,
   // because nobody played a last card.
@@ -387,7 +433,7 @@ test('one human plays a real round against a computer player', async ({ page }) 
   await page.getByRole('button', { name: /Start game/ }).click()
   await expect(page.locator('.board')).toBeVisible()
   // The board labels the computer, so a pause on its turn reads as thinking rather than as a stall.
-  await expect(page.locator('.opponent .tag--bot')).toBeVisible()
+  await expect(page.locator('.seat .tag--bot')).toBeVisible()
 
   let sawEnd = false
   let idleStreak = 0

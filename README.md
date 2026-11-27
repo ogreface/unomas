@@ -142,5 +142,12 @@ Each phone also makes a little noise at the moments that matter to its player: t
 anybody calling UNO, their own clock running out, and the end of the game — muted from the speaker
 button on the top bar. See [the plan, §2.3](docs/plan.md#23-sound--done).
 
-**350 unit/integration tests + 9 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
+The toasts narrate each move and fade; for the "wait, who skipped me?" moment, **Log** in the top
+bar (and on the table view) opens a drawer with every line of that narration since the deal. The
+room keeps the log, in the form the whole table may see, and sends each screen whatever part of it
+that screen is missing — so a phone that refreshes, reconnects or rides out a deploy still has the
+whole game. A game already under way when the log shipped has its opening rebuilt, once, by
+replaying the action log, and the result is kept only if it lands on exactly the stored game.
+
+**388 unit/integration tests + 10 e2e pass; `tsc`, `vitest`, and `eslint` are all clean.**
 Still to come in Stage 2: house-rule toggles, and the full a11y pass.

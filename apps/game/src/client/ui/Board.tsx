@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { playerToActInView } from '@flipside/engine'
 import type { CardView, Color, PlayerView } from '@flipside/engine'
 import { SideBadge } from './SideBadge.js'
@@ -10,10 +10,12 @@ import { Players } from './Players.js'
 import { Hand } from './Hand.js'
 import { ColorPicker } from './ColorPicker.js'
 import { Feed } from './Feed.js'
+import { GameLog, GameLogToggle } from './GameLog.js'
 import { TurnClock, useTurnClock } from './TurnClock.js'
 import type { ClockReading } from './TurnClock.js'
 import { useSoundCues } from './useSoundCues.js'
 import { playCues, setSoundMuted, soundMuted } from '../lib/sound.js'
+import { upNext } from '../lib/turnOrder.js'
 import { droppedNotice } from '../lib/dropped.js'
 
 /** No computer players — what the top bar is told once the room has stopped them. */
@@ -22,17 +24,24 @@ const NOBODY: Set<string> = new Set()
 export function Board({ room }: { room: RoomState }) {
   const view = room.view!
   const [pendingWild, setPendingWild] = useState<CardView | null>(null)
+  const [logOpen, setLogOpen] = useState(false)
+  const closeLog = useCallback(() => setLogOpen(false), [])
+  const toggleLog = useCallback(() => setLogOpen(open => !open), [])
   // One ticking clock per screen, read once and handed down — see `TurnClock.tsx`.
   const clock = useTurnClock(room.timer)
   useSoundCues(view, room.feed, clock)
 
-  const nameOf = (id: string) => view.players.find(p => p.id === id)?.name ?? '—'
+  // Stable between views, so the game log (memoised) is not rebuilt on every tick of the clock.
+  const players = view.players
+  const nameOf = useCallback((id: string) => players.find(p => p.id === id)?.name ?? '—', [players])
   const me = view.players.find(p => p.id === view.you)
   const myTurn = view.turn === view.you
   // Who the table is waiting on. Usually the player at the turn, but not always: a wild draw leaves
   // the turn where it was while the *next* player decides whether to challenge. Everything that
   // points at a person — the label, the highlighted seat — follows this, so it agrees with the clock.
   const toAct = playerToActInView(view)
+  // …and the seat after them: the one being played on, tagged in the strip and named in the top bar.
+  const next = upNext(view)
   const phase = view.phase
 
   const canPlay = (phase.t === 'awaitingPlay' || phase.t === 'awaitingDrawnCardChoice') && myTurn
@@ -71,15 +80,20 @@ export function Board({ room }: { room: RoomState }) {
         nameOf={nameOf}
         // The label says a computer player "is thinking…". Once the room has stopped them, it is not.
         bots={tableEmpty ? NOBODY : room.bots}
+        next={next}
         clock={clock}
         onLeave={() => navigate('/')}
+        logOpen={logOpen}
+        onToggleLog={toggleLog}
       />
 
       <Players
         players={view.players}
         you={view.you}
         side={view.side}
+        direction={view.direction}
         toAct={toAct}
+        next={next}
         unoWindow={view.unoWindow}
         clock={clock}
         bots={room.bots}
@@ -97,7 +111,14 @@ export function Board({ room }: { room: RoomState }) {
         onDraw={() => room.send({ t: 'draw' })}
       />
 
+      {/* On a phone the top bar has no width left for the Log button, so it sits here instead —
+          under the discard pile, in space the board is not using. See `.board-tools` in the CSS. */}
+      <div className="board-tools">
+        <GameLogToggle open={logOpen} onToggle={toggleLog} />
+      </div>
+
       <Feed feed={room.feed} nameOf={nameOf} />
+      {logOpen && <GameLog log={room.log} nameOf={nameOf} onClose={closeLog} />}
 
       <div className="action-bar">
         {phase.t === 'awaitingChallenge' && phase.challenger === view.you && (
@@ -190,15 +211,26 @@ function TopBar({
   view,
   nameOf,
   bots,
+  next,
   clock,
   onLeave,
+  logOpen,
+  onToggleLog,
 }: {
   view: PlayerView
   nameOf: (id: string) => string
   /** Seats played by the computer: the label says they are thinking rather than looking like a stall. */
   bots: Set<string>
+  /**
+   * The seat being played on. Named here as well as tagged in the strip, because on a phone the
+   * strip can't always show both ends of the turn at once — when play wraps round the end of the
+   * row, the next seat is at the far end of it.
+   */
+  next: string | null
   clock: ClockReading | null
   onLeave: () => void
+  logOpen: boolean
+  onToggleLog: () => void
 }) {
   // The label and the clock both belong to whoever owes the decision, which is not always the player
   // at the turn: a challenge is owed by somebody else while the turn sits still. A bot is never on
@@ -211,9 +243,15 @@ function TopBar({
         ‹
       </button>
       <SideBadge side={view.side} />
-      <span className="turn-label">{turnLabel(view, bots)}</span>
+      <span className="turn-status">
+        <span className="turn-label">{turnLabel(view, bots)}</span>
+        {next !== null && (
+          <span className={`turn-next${next === view.you ? ' turn-next--you' : ''}`}>
+            {next === view.you ? 'You’re next' : `Next: ${nameOf(next)}`}
+          </span>
+        )}
+      </span>
       {clock && <TurnClock clock={clock} label={clockLabel} size={34} />}
-      <span className="dir">{view.direction === 1 ? '↻' : '↺'}</span>
       {view.activeColor && (
         <span className="active-color-tag" title="The colour in play right now">
           <span
@@ -223,6 +261,7 @@ function TopBar({
           <span className="active-color-tag__name">{view.activeColor}</span>
         </span>
       )}
+      <GameLogToggle open={logOpen} onToggle={onToggleLog} />
       <SoundToggle />
     </header>
   )
